@@ -1,266 +1,765 @@
 <!DOCTYPE html>
-<html lang="it" class="dark">
+<html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Flip 7 AI</title>
-  <meta name="description" content="Gioca a Flip 7 contro l'IA! PWA in puro HTML, CSS e JavaScript Vanilla.">
-  <meta name="theme-color" content="#0f172a">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="apple-touch-icon" href="icon-192.png">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Flip 7</title>
+<meta name="description" content="Gioca a Flip 7 contro l'IA — un gioco di carte push-your-luck.">
+<meta name="theme-color" content="#12100f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/icon-192.svg">
+<link rel="icon" href="assets/icons/icon-192.svg">
+<style>
+:root {
+  --bg: #12100f;
+  --panel: #1e1b18;
+  --panel-border: #473e37;
+  --cell-bg: #2d2722;
+  --cell-border: #423a33;
+  --gold: #f59e0b;
+  --gold-light: #fbbf24;
+  --text: #f5f0eb;
+  --muted: #a89f91;
+  --blue: #0284c7;
+  --green: #16a34a;
+  --red: #dc2626;
+  --purple: #9333ea;
+  --cyan: #0891b2;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Screen Views */
+.view-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  transform: scale(0.97);
+  z-index: 10;
+}
+.view-screen.active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+/* Android Install Banner */
+#android-install-banner {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  z-index: 999;
+  background: linear-gradient(135deg, #2b2420, #1a1614);
+  border: 1px solid var(--gold);
+  border-radius: 30px;
+  padding: 8px 18px;
+  display: none;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.8);
+  animation: floatBanner 3s ease-in-out infinite;
+}
+
+/* iOS Guided Install Banner */
+#ios-install-banner {
+  position: fixed;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 999;
+  background: linear-gradient(135deg, #2b2420, #1a1614);
+  border: 1.5px solid var(--gold);
+  border-radius: 16px;
+  padding: 12px 18px;
+  max-width: 380px;
+  width: 90vw;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.85);
+  animation: slideUpBanner 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes slideUpBanner {
+  from { transform: translateY(100px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes floatBanner {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+/* Pull-to-refresh indicator */
+#pull-refresh-indicator {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translate(-50%, -60px);
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #1e1b18;
+  border: 1.5px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  opacity: 0;
+  transition: transform 0.25s ease, opacity 0.25s ease, border-color 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+#pull-refresh-indicator.pulling { transition: none; }
+#pull-refresh-indicator.ready { border-color: var(--gold); }
+#pull-refresh-indicator svg {
+  width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; transition: stroke 0.2s ease;
+}
+#pull-refresh-indicator.ready svg { stroke: var(--gold); }
+#pull-refresh-indicator.refreshing svg { stroke: var(--gold); animation: pullSpin 0.7s linear infinite; }
+@keyframes pullSpin { to { transform: rotate(360deg); } }
+
+/* Home Screen */
+.home-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+}
+.app-logo {
+  width: 100%;
+  max-width: 320px;
+  filter: drop-shadow(0 8px 16px rgba(0,0,0,0.6));
+}
+.home-tagline {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+  padding: 0 8px;
+  margin-top: -8px;
+}
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.btn-main {
+  background: linear-gradient(135deg, var(--gold-light), var(--gold));
+  color: #1a1410;
+  border: none;
+  border-radius: 14px;
+  padding: 15px;
+  font-weight: 800;
+  font-size: 15px;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(245,158,11,0.35);
+  transition: transform 0.15s ease;
+}
+.btn-main:active { transform: scale(0.97); }
+.btn-sub {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 13px;
+  font-weight: 700;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-sub:active { transform: scale(0.97); background: #29231f; }
+
+/* Setup Screen */
+.ritual-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 22px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.ritual-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--gold);
+  text-align: center;
+  margin-bottom: 18px;
+}
+.setup-group { margin-bottom: 14px; }
+.setup-group label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 6px;
+}
+.setup-group input, .setup-group select {
+  width: 100%;
+  background: var(--cell-bg);
+  border: 1px solid var(--cell-border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.setup-group input:focus, .setup-group select:focus { outline: 1.5px solid var(--gold); }
+.setup-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.setup-row button { flex: 1; }
+
+/* Game Screen */
+#screen-game { padding: 10px; justify-content: space-between; }
+
+.status-bar {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1e1b18;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 9px 16px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  gap: 8px;
+}
+.status-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.status-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+  animation: turnGlow 2s infinite ease-in-out;
+  transition: background 0.3s ease;
+}
+@keyframes turnGlow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.3); } }
+.status-text {
+  font-size: 12.5px; font-weight: 700; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.status-right {
+  font-size: 11.5px; color: var(--muted); font-weight: 600;
+  white-space: nowrap; flex-shrink: 0;
+}
+.status-right strong { color: var(--gold-light); }
+.thinking-dots { display: flex; gap: 3px; flex-shrink: 0; }
+.thinking-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); animation: bounceDot 1.2s infinite; }
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounceDot { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1.2); opacity: 1; } }
+
+.arena {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: auto 0;
+}
+
+.player-zone {
+  background: var(--panel);
+  border: 1.5px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 10px 12px;
+  transition: opacity 0.3s ease, border-color 0.3s ease;
+}
+.player-zone.inactive-turn { opacity: 0.62; }
+.player-zone.active-turn { border-color: var(--gold); }
+
+.zone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+.zone-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.zone-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: linear-gradient(135deg, #352d27, #221d19);
+  border: 1px solid var(--panel-border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; flex-shrink: 0;
+}
+.zone-name { font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zone-total { font-size: 10.5px; color: var(--muted); }
+.zone-total strong { color: var(--gold-light); }
+
+.zone-stats { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.zone-round-score {
+  background: #12100f;
+  border: 1px solid rgba(22,163,74,0.4);
+  border-radius: 10px;
+  padding: 3px 9px;
+  text-align: center;
+  min-width: 44px;
+}
+.zone-round-score .val { font-size: 15px; font-weight: 900; color: #4ade80; line-height: 1.1; }
+.zone-round-score .lbl { font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.zone-unique { text-align: center; min-width: 30px; }
+.zone-unique .val { font-size: 15px; font-weight: 900; color: var(--gold); line-height: 1.1; }
+.zone-unique .lbl { font-size: 7.5px; color: var(--muted); text-transform: uppercase; }
+
+.badge-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.status-active { background: rgba(22,163,74,0.18); color: #4ade80; border-color: rgba(22,163,74,0.4); }
+.status-stayed { background: rgba(2,132,199,0.18); color: #7dd3fc; border-color: rgba(2,132,199,0.4); }
+.status-busted { background: rgba(220,38,38,0.18); color: #fca5a5; border-color: rgba(220,38,38,0.4); }
+.status-freezed { background: rgba(8,145,178,0.18); color: #67e8f9; border-color: rgba(8,145,178,0.4); }
+.status-flip7 { background: var(--gold); color: #1a1410; border-color: var(--gold); }
+
+.card-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px;
+  min-height: 62px;
+  scrollbar-width: none;
+}
+.card-strip::-webkit-scrollbar { display: none; }
+.card-strip:empty::after {
+  content: 'Nessuna carta';
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  padding-left: 4px;
+}
+
+.card-chip {
+  width: 42px;
+  min-width: 42px;
+  height: 58px;
+  border-radius: 8px;
+  border: 1.5px solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  flex-shrink: 0;
+  box-shadow: 0 3px 6px rgba(0,0,0,0.4);
+  animation: cardPop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes cardPop { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.card-chip.chip-number { background: linear-gradient(160deg, #1d4ed8, #1e1b4b); border-color: #60a5fa; color: #fff; font-size: 19px; }
+.card-chip.chip-modifier { background: linear-gradient(160deg, var(--gold), #9a3412); border-color: var(--gold-light); color: #fff; font-size: 13px; }
+.card-chip.chip-action { background: linear-gradient(160deg, var(--purple), #581c87); border-color: #c084fc; color: #fff; font-size: 16px; }
+
+.bottom-bar {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.icon-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #1a1614;
+  border: 1.5px solid var(--panel-border);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.icon-btn:active { transform: scale(0.88); color: var(--gold); border-color: var(--gold); }
+.icon-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.action-buttons { display: flex; gap: 8px; flex: 1; }
+.btn-hit, .btn-stay {
+  flex: 1;
+  padding: 13px 8px;
+  border-radius: 14px;
+  border: none;
+  font-weight: 900;
+  font-size: 14px;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+}
+.btn-hit { background: linear-gradient(135deg, #4ade80, #16a34a); color: #052e12; }
+.btn-stay { background: linear-gradient(135deg, #38bdf8, #0284c7); color: #041c2e; }
+.btn-hit:active, .btn-stay:active { transform: scale(0.96); }
+.btn-hit:disabled, .btn-stay:disabled { opacity: 0.35; pointer-events: none; }
+
+.turn-prompt {
+  width: 100%;
+  max-width: 480px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  min-height: 15px;
+}
+.turn-prompt strong { color: var(--gold-light); }
+
+/* Dialogs */
+dialog {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  padding: 20px;
+  max-width: 420px;
+  width: calc(100vw - 40px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+}
+dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.modal-title { font-size: 16px; font-weight: 800; color: var(--gold); }
+.rules-section { margin-bottom: 12px; }
+.rules-section h4 { font-size: 12.5px; font-weight: 800; margin-bottom: 4px; }
+.rules-section p, .rules-section li { font-size: 12px; color: #cfc7be; line-height: 1.5; }
+.rules-section ul { padding-left: 18px; }
+
+/* Toast */
+#toast {
+  position: fixed;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: #221d19;
+  border: 1px solid var(--gold);
+  color: var(--text);
+  padding: 10px 20px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.3s ease;
+  z-index: 2000;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  max-width: 90vw;
+  text-align: center;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Round/Game end summary */
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #12100f;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.summary-row .name { font-weight: 700; }
+.summary-row .gain { color: #4ade80; font-weight: 800; }
+.summary-row .total { color: var(--muted); font-size: 11px; }
+
+.stat-block {
+  background: #29231f;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.stat-block .stat-title { font-weight: 700; color: var(--gold-light); margin-bottom: 2px; font-size: 12.5px; }
+.stat-block .stat-row { display: flex; justify-content: space-between; font-size: 11.5px; }
+</style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between select-none font-sans">
+<body>
 
-  <!-- HEADER STATICO (Sempre visibile e fisso) -->
-  <header class="header border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-4 py-3 sticky top-0 z-40 flex justify-between items-center max-w-4xl mx-auto w-full">
-    <div class="flex items-center space-x-3">
-      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center font-extrabold text-slate-950 text-xl shadow-md">
-        7
-      </div>
-      <div>
-        <h1 class="font-extrabold text-white text-base sm:text-lg tracking-tight">Flip 7 AI</h1>
-        <div class="text-[10px] text-slate-400">PWA Vanilla</div>
-      </div>
+<!-- Android Native Install Banner -->
+<div id="android-install-banner">
+  <span style="font-size: 12.5px; font-weight: 700;">Installa Flip 7</span>
+  <button class="btn-main" style="padding: 5px 12px; font-size: 11px;" onclick="triggerAndroidInstall()">Installa</button>
+  <button style="background:none; border:none; color:var(--muted); font-size: 14px; cursor:pointer;" onclick="document.getElementById('android-install-banner').style.display='none'">✕</button>
+</div>
+
+<!-- iOS Guided Install Banner -->
+<div id="ios-install-banner">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <span style="font-size: 13px; font-weight: 800; color:var(--gold);">📲 Installa su iPhone / iPad</span>
+    <button style="background:none; border:none; color:var(--muted); font-size: 14px; cursor:pointer;" onclick="dismissIosBanner()">✕</button>
+  </div>
+  <p style="font-size: 12px; color: #cfc7be; line-height: 1.4;">
+    Tocca l'icona <strong>Condividi</strong> (📤 in Safari) e seleziona <strong>"Aggiungi alla schermata Home" ➕</strong> per giocare a tutto schermo.
+  </p>
+</div>
+
+<!-- Pull-to-refresh indicator -->
+<div id="pull-refresh-indicator">
+  <svg id="pull-refresh-icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+</div>
+
+<!-- SCREEN 1: HOME MENU -->
+<div id="screen-home" class="view-screen active">
+  <div class="home-container">
+    <img src="./assets/logo.svg" alt="Flip 7 Logo" class="app-logo">
+    <p class="home-tagline">Pesca carte, accumula punti, ma occhio ai doppioni: due numeri uguali e perdi tutto il turno. Primo a 200 punti vince.</p>
+    <div class="menu-buttons">
+      <button class="btn-main" onclick="openSetupScreen()">🎴 Gioca Ora</button>
+      <button class="btn-sub" onclick="document.getElementById('rules-modal').showModal()">📖 Come si Gioca</button>
+      <button class="btn-sub" onclick="openStatsModal()">📊 Statistiche & Storico</button>
+      <button class="btn-sub" onclick="openSettingsModal()">⚙️ Opzioni & Chiave AI</button>
+      <button class="btn-sub" onclick="exitApp()">🚪 Esci</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCREEN 2: SETUP -->
+<div id="screen-setup" class="view-screen">
+  <div class="ritual-card">
+    <div class="ritual-title">Prepara il Tavolo</div>
+
+    <div class="setup-group">
+      <label>Il tuo nome</label>
+      <input type="text" id="p1-name-input" placeholder="Giocatore" onchange="saveProfile()">
     </div>
 
-    <!-- Scores Overview Sempre Visibile -->
-    <div class="flex items-center space-x-4 bg-slate-950/80 px-4 py-1.5 rounded-full border border-slate-800 text-xs">
-      <div>👤 <strong id="header-human-score" class="text-amber-400 font-black text-sm">0</strong> pt</div>
-      <span class="text-slate-600">vs</span>
-      <div>🤖 <strong id="header-ai-score" class="text-amber-400 font-black text-sm">0</strong> pt</div>
-      <span class="text-slate-600">|</span>
-      <div class="text-amber-400 font-bold" id="header-round-num">Mano 1</div>
+    <div class="setup-group">
+      <label>Avversario</label>
+      <select id="difficulty-select" onchange="onDifficultyChange(this.value)">
+        <option value="easy">Facile (Prudente)</option>
+        <option value="normal" selected>Normale (Bilanciato)</option>
+        <option value="hard">Difficile (Calcolatore)</option>
+        <option value="gemini">AI Suprema (Gemini)</option>
+      </select>
+      <div id="ai-model-caption" style="display:none; font-size:10.5px; color:var(--muted); padding:4px 2px 0;"></div>
     </div>
 
-    <button id="btn-rules" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs font-semibold">
-      📜 Regole
-    </button>
-  </header>
-
-  <!-- MAIN CONTAINER CON TUTTI I FRAME PERMANENTEMENTE VISIBILI -->
-  <main class="max-w-4xl w-full mx-auto p-4 flex-1 flex flex-col space-y-4">
-    
-    <!-- FRAME 1: BANNER EVENTI (Sempre visibile in alto) -->
-    <div id="event-banner" class="w-full bg-slate-900/90 border border-amber-500/40 rounded-xl p-3 flex items-center justify-between shadow-md">
-      <div class="flex items-center space-x-3">
-        <span id="event-banner-icon" class="text-2xl">🎮</span>
-        <div>
-          <div id="event-banner-text" class="text-sm font-extrabold text-amber-300">
-            Benvenuto in Flip 7 AI!
-          </div>
-          <div id="event-banner-sub" class="text-[11px] text-slate-400">
-            Premi "Nuova Partita" o fai le tue mosse con i pulsanti sotto.
-          </div>
-        </div>
-      </div>
-      <div id="event-banner-action"></div>
+    <div class="setup-row">
+      <button class="btn-sub" onclick="navigateScreen('screen-home')">Indietro</button>
+      <button class="btn-main" onclick="startNewGame()">Inizia Partita</button>
     </div>
+  </div>
+</div>
 
-    <!-- FRAME 2: AREA IA (Flip 7 Bot - Sempre Visibile) -->
-    <div id="ai-area" class="player-area rounded-2xl p-4 border bg-slate-900/70 border-slate-700/60 shadow-lg">
-      <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
-        <div class="flex items-center space-x-3">
-          <div class="w-11 h-11 rounded-full bg-gradient-to-tr from-slate-700 to-slate-800 border border-slate-600 flex items-center justify-center text-2xl font-bold">
-            🤖
-          </div>
+<!-- SCREEN 3: GAME -->
+<div id="screen-game" class="view-screen">
+  <div class="status-bar">
+    <div class="status-left">
+      <span id="status-dot" class="status-dot" style="background:#0284c7;"></span>
+      <span id="status-text" class="status-text">Turno</span>
+    </div>
+    <div id="status-thinking-dots" class="thinking-dots" style="display:none;">
+      <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
+    </div>
+    <div id="status-right" class="status-right">Tu <strong>0</strong> · IA <strong>0</strong></div>
+  </div>
+
+  <div class="arena">
+    <div id="ai-zone" class="player-zone">
+      <div class="zone-header">
+        <div class="zone-identity">
+          <div class="zone-avatar">🤖</div>
           <div>
-            <div class="flex items-center space-x-2">
-              <h3 class="font-extrabold text-white text-lg">IA (Flip 7 Bot)</h3>
-              <span id="ai-status-badge" class="badge-status status-active">ATTIVO</span>
-            </div>
-            <div class="text-xs text-slate-300 flex items-center space-x-2 mt-1">
-              <span>Punteggio Totale: <strong id="ai-total-score" class="text-amber-400 text-sm font-black">0 pt</strong></span>
-            </div>
+            <div class="zone-name" id="ai-name">IA</div>
+            <div class="zone-total">Totale: <strong id="ai-total">0</strong> pt</div>
           </div>
+          <span id="ai-status-badge" class="badge-status status-active">ATTIVO</span>
         </div>
-
-        <div class="flex items-center space-x-4">
-          <div class="bg-slate-950/80 border border-emerald-500/40 rounded-xl px-3 py-1.5 text-center shadow-inner">
-            <div class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Mano Potenziale</div>
-            <div id="ai-round-score" class="text-xl sm:text-2xl font-black text-emerald-400 leading-none mt-0.5">0 pt</div>
-          </div>
-
-          <div class="text-right min-w-[70px]">
-            <div class="text-[10px] text-slate-400 font-semibold uppercase">Valori Unici</div>
-            <div class="text-xl font-black text-amber-400">
-              <span id="ai-unique-count">0</span> <span class="text-xs font-normal text-slate-400">/ 7</span>
-            </div>
-          </div>
+        <div class="zone-stats">
+          <div class="zone-round-score"><div class="val" id="ai-round-score">0</div><div class="lbl">Mano</div></div>
+          <div class="zone-unique"><div class="val"><span id="ai-unique">0</span>/7</div><div class="lbl">Unici</div></div>
         </div>
       </div>
-
-      <div id="ai-cards" class="cards-container min-h-[148px] h-[148px] p-2 bg-slate-950/60 rounded-xl border border-slate-800/80 flex items-center space-x-3 overflow-x-auto">
-      </div>
+      <div id="ai-cards" class="card-strip"></div>
     </div>
 
-    <!-- FRAME 3: INDICATORE IA STA PENSANDO (Spazio riservato fisso) -->
-    <div class="h-6 flex items-center justify-center">
-      <div id="ai-thinking" class="hidden text-center py-1 px-4 bg-purple-950/80 border border-purple-500/50 rounded-full text-purple-200 text-xs font-bold w-fit mx-auto">
-        🤖 L'IA sta valutando la mossa...
-      </div>
-    </div>
-
-    <!-- FRAME 4: AREA GIOCATORE UMANO (Sempre Visibile) -->
-    <div id="human-area" class="player-area rounded-2xl p-4 border bg-slate-900/70 border-slate-700/60 shadow-lg">
-      <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
-        <div class="flex items-center space-x-3">
-          <div class="w-11 h-11 rounded-full bg-gradient-to-tr from-slate-700 to-slate-800 border border-slate-600 flex items-center justify-center text-2xl font-bold">
-            👤
-          </div>
+    <div id="human-zone" class="player-zone">
+      <div class="zone-header">
+        <div class="zone-identity">
+          <div class="zone-avatar">🧑</div>
           <div>
-            <div class="flex items-center space-x-2">
-              <h3 class="font-extrabold text-white text-lg">Giocatore</h3>
-              <span id="human-status-badge" class="badge-status status-active">ATTIVO</span>
-            </div>
-            <div class="text-xs text-slate-300 flex items-center space-x-2 mt-1">
-              <span>Punteggio Totale: <strong id="human-total-score" class="text-amber-400 text-sm font-black">0 pt</strong></span>
-            </div>
+            <div class="zone-name" id="human-name">Tu</div>
+            <div class="zone-total">Totale: <strong id="human-total">0</strong> pt</div>
           </div>
+          <span id="human-status-badge" class="badge-status status-active">ATTIVO</span>
         </div>
-
-        <div class="flex items-center space-x-4">
-          <div class="bg-slate-950/80 border border-emerald-500/40 rounded-xl px-3 py-1.5 text-center shadow-inner">
-            <div class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Mano Potenziale</div>
-            <div id="human-round-score" class="text-xl sm:text-2xl font-black text-emerald-400 leading-none mt-0.5">0 pt</div>
-          </div>
-
-          <div class="text-right min-w-[70px]">
-            <div class="text-[10px] text-slate-400 font-semibold uppercase">Valori Unici</div>
-            <div class="text-xl font-black text-amber-400">
-              <span id="human-unique-count">0</span> <span class="text-xs font-normal text-slate-400">/ 7</span>
-            </div>
-          </div>
+        <div class="zone-stats">
+          <div class="zone-round-score"><div class="val" id="human-round-score">0</div><div class="lbl">Mano</div></div>
+          <div class="zone-unique"><div class="val"><span id="human-unique">0</span>/7</div><div class="lbl">Unici</div></div>
         </div>
       </div>
-
-      <div id="human-cards" class="cards-container min-h-[148px] h-[148px] p-2 bg-slate-950/60 rounded-xl border border-slate-800/80 flex items-center space-x-3 overflow-x-auto">
-      </div>
-    </div>
-
-    <!-- FRAME 5: PANNELLO DEI CONTROLLI E AZIONI (Sempre Visibile) -->
-    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-xl flex-wrap gap-3 min-h-[72px]">
-      <div class="text-xs text-slate-400 flex items-center space-x-3">
-        <div>Mazzo: <strong id="deck-count" class="text-white font-bold">94</strong></div>
-        <span>•</span>
-        <div>Scarti: <strong id="discard-count" class="text-white font-bold">0</strong></div>
-      </div>
-
-      <div class="flex items-center space-x-2">
-        <button id="btn-start-game" class="py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
-          🎮 Nuova Partita
-        </button>
-
-        <div id="controls-human" class="flex items-center space-x-2">
-          <button id="btn-hit" class="py-2.5 px-5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
-            👉 HIT
-          </button>
-          <button id="btn-stay" class="py-2.5 px-5 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-lg">
-            🛡️ STAY
-          </button>
-        </div>
-
-        <button id="btn-next-round" class="hidden py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
-          Prossima Mano &rarr;
-        </button>
-
-        <button id="btn-restart-game" class="hidden py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
-          Ricomincia 🔄
-        </button>
-      </div>
-    </div>
-
-    <!-- FRAME 6: LOG EVENTI CRONOLOGICI (Sempre Visibile) -->
-    <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 h-36 flex flex-col justify-between backdrop-blur-md">
-      <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
-        <span>Log Eventi Partita</span>
-        <span class="text-[10px] text-slate-500">Cronologia recente</span>
-      </div>
-      <div id="log-container" class="overflow-y-auto space-y-1.5 pr-1 flex-1 text-xs">
-      </div>
-    </div>
-
-    <!-- FRAME 7: IMPOSTAZIONI DI GIOCO IN FONDO (Permanente senza Popup) -->
-    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-      <div class="text-xs font-extrabold text-amber-400 uppercase tracking-wider flex items-center space-x-2 border-b border-slate-800 pb-2">
-        <span>⚙️</span>
-        <span>Impostazioni di Gioco</span>
-      </div>
-
-      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <!-- Sezione Difficoltà IA -->
-        <div class="flex items-center space-x-2">
-          <span class="text-xs font-semibold text-slate-300">Difficoltà IA:</span>
-          <div class="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800">
-            <button data-level="EASY" class="btn-level py-1 px-3 text-xs font-bold rounded-md text-slate-400 hover:text-white">FACILE</button>
-            <button data-level="NORMAL" class="btn-level py-1 px-3 text-xs font-bold rounded-md bg-amber-500 text-slate-950">NORMALE</button>
-            <button data-level="HARD" class="btn-level py-1 px-3 text-xs font-bold rounded-md text-slate-400 hover:text-white">DIFFICILE</button>
-          </div>
-        </div>
-
-        <!-- Sezione Effetti Sonori -->
-        <div class="flex items-center space-x-3">
-          <span class="text-xs font-semibold text-slate-300">Suoni Audio:</span>
-          <button id="toggle-sound" class="w-12 h-6 rounded-full bg-emerald-500 p-1 flex items-center justify-end transition-colors">
-            <div class="w-4 h-4 rounded-full bg-white shadow-sm"></div>
-          </button>
-        </div>
-      </div>
-    </div>
-
-  </main>
-
-  <!-- RULES MODAL (Solo per la guida regole) -->
-  <div id="modal-rules" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm">
-    <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl space-y-4">
-      <div class="flex justify-between items-center border-b border-slate-800 pb-3 sticky top-0 bg-slate-900 z-10">
-        <h2 class="text-xl font-extrabold text-amber-400 flex items-center space-x-2">
-          <span>📜</span>
-          <span>Regole del Gioco - Flip 7</span>
-        </h2>
-        <button id="btn-close-rules" class="text-slate-400 hover:text-white text-xl font-bold px-2 py-1">✕</button>
-      </div>
-
-      <div class="text-xs text-slate-300 space-y-3 leading-relaxed">
-        <section>
-          <h3 class="font-bold text-white text-sm mb-1 text-amber-300">🎯 Obiettivo del Gioco</h3>
-          <p>Flip 7 è un gioco di carte "push your luck". Accumula carte Numero con valori elevati senza pescare due volte lo stesso valore numerico nella stessa mano. Raggiungi o supera <strong>200 punti</strong> per vincere!</p>
-        </section>
-
-        <section>
-          <h3 class="font-bold text-white text-sm mb-1 text-red-400">💥 Rischio BUST & Carte Numero</h3>
-          <p>Il mazzo contiene carte da 0 a 12 (il numero di copie è pari al valore, tranne 0 che ha 1 copia). Se peschi un numero che hai già davanti a te, vai in <strong>BUST</strong> e perdi tutti i punti della mano! Puoi fermarti in qualsiasi momento (<strong>STAY</strong>).</p>
-        </section>
-
-        <section>
-          <h3 class="font-bold text-white text-sm mb-1 text-amber-400">🎉 Bonus FLIP 7</h3>
-          <p>Se accumuli <strong>7 carte Numero con valori differenti</strong> (compreso lo 0), realizzi un <strong>FLIP 7</strong>! La mano termina immediatamente per tutti e ottieni un <strong>bonus di +15 punti</strong>.</p>
-        </section>
-
-        <section>
-          <h3 class="font-bold text-white text-sm mb-1 text-orange-400">➕ Carte Modificatore</h3>
-          <ul class="list-disc pl-4 space-y-1">
-            <li><strong>+2:</strong> aggiunge sempre 2 punti alla mano.</li>
-            <li><strong>x2:</strong> raddoppia la somma delle carte Numero (non raddoppia il +2 o il bonus Flip 7).</li>
-          </ul>
-        </section>
-
-        <section>
-          <h3 class="font-bold text-white text-sm mb-1 text-purple-400">⚡ Carte Azione</h3>
-          <ul class="list-disc pl-4 space-y-1">
-            <li><strong>FREEZE:</strong> costringe un giocatore attivo a fare STAY.</li>
-            <li><strong>FLIP THREE:</strong> obbliga un giocatore a effettuare 3 pescate consecutive.</li>
-            <li><strong>SECOND CHANCE:</strong> ti protegge da 1 BUST numerico scartandosi al suo posto.</li>
-          </ul>
-        </section>
-      </div>
-
-      <button id="btn-confirm-rules" class="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold rounded-xl shadow-lg transition-all mt-4">
-        Ho Capito!
-      </button>
+      <div id="human-cards" class="card-strip"></div>
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <div class="turn-prompt" id="turn-prompt">&nbsp;</div>
+
+  <div class="bottom-bar">
+    <button class="icon-btn" title="Home" onclick="confirmExitToHome()">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    </button>
+    <button class="icon-btn" title="Regole" onclick="document.getElementById('rules-modal').showModal()">
+      <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+    </button>
+    <div class="action-buttons">
+      <button id="btn-hit" class="btn-hit" onclick="onHitClick()">👉 HIT</button>
+      <button id="btn-stay" class="btn-stay" onclick="onStayClick()">🛡️ STAY</button>
+    </div>
+    <button class="icon-btn" title="Ricomincia" onclick="restartMatch()">
+      <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- MODALS -->
+
+<!-- Rules Modal -->
+<dialog id="rules-modal">
+  <div class="modal-header">
+    <span class="modal-title">📖 Come si Gioca</span>
+    <button class="btn-sub" style="padding:4px 8px;" onclick="document.getElementById('rules-modal').close()">✕</button>
+  </div>
+  <div class="rules-section">
+    <h4 style="color:var(--gold-light);">🎯 Obiettivo</h4>
+    <p>Pesca carte Numero per accumulare punti. Se peschi due volte lo stesso numero: <strong>BUST</strong>, perdi tutti i punti della mano. Puoi fermarti quando vuoi con <strong>STAY</strong>. Primo a <strong>200 punti</strong> vince.</p>
+  </div>
+  <div class="rules-section">
+    <h4 style="color:#fbbf24;">🎉 Bonus Flip 7</h4>
+    <p>7 numeri diversi davanti a te: la mano finisce subito per tutti e ottieni <strong>+15 punti</strong>.</p>
+  </div>
+  <div class="rules-section">
+    <h4 style="color:var(--gold);">➕ Modificatori</h4>
+    <p><strong>+2/+4/+6/+8/+10:</strong> aggiunti sempre al punteggio. <strong>x2:</strong> raddoppia solo la somma dei numeri.</p>
+  </div>
+  <div class="rules-section">
+    <h4 style="color:#c084fc;">⚡ Carte Azione</h4>
+    <ul>
+      <li><strong>FREEZE:</strong> costringe un giocatore a fare STAY subito.</li>
+      <li><strong>FLIP THREE:</strong> obbliga a pescare 3 carte di fila.</li>
+      <li><strong>SECOND CHANCE:</strong> ti salva da un BUST, poi si scarta.</li>
+    </ul>
+  </div>
+  <button class="btn-main" style="width:100%; margin-top:6px;" onclick="document.getElementById('rules-modal').close()">Ho Capito!</button>
+</dialog>
+
+<!-- Settings Modal -->
+<dialog id="settings-modal">
+  <div class="modal-header">
+    <span class="modal-title">⚙️ Opzioni & Chiave AI</span>
+    <button class="btn-sub" style="padding:4px 8px;" onclick="document.getElementById('settings-modal').close()">✕</button>
+  </div>
+  <div class="setup-group">
+    <label>Google Gemini API Key</label>
+    <input type="password" id="gemini-key-input" placeholder="Incolla chiave" onchange="saveGeminiKey(this.value)">
+    <span style="font-size:10.5px; color:var(--muted); display:block; margin-top:4px;">Serve solo per la difficoltà "AI Suprema". Rilevamento automatico del modello Flash più recente.</span>
+  </div>
+  <div class="setup-group">
+    <label>Suoni</label>
+    <select id="sound-select" onchange="saveSoundSetting(this.value)">
+      <option value="on">Attivi</option>
+      <option value="off">Disattivati</option>
+    </select>
+  </div>
+  <div id="ai-test-result" style="font-size:11.5px; color:var(--muted); min-height:14px; margin-bottom:10px;"></div>
+  <div style="display:flex; gap:8px;">
+    <button class="btn-sub" style="flex:1;" onclick="testAiConnection()">Testa AI</button>
+    <button class="btn-main" style="flex:1; padding:10px;" onclick="document.getElementById('settings-modal').close()">Salva</button>
+  </div>
+</dialog>
+
+<!-- Stats Modal -->
+<dialog id="stats-modal">
+  <div class="modal-header">
+    <span class="modal-title">📊 Statistiche & Storico</span>
+    <button class="btn-sub" style="padding:4px 8px;" onclick="document.getElementById('stats-modal').close()">✕</button>
+  </div>
+  <div id="stats-summary"></div>
+  <button class="btn-sub" style="width:100%; margin-top:4px;" onclick="resetStats()">Azzera Statistiche</button>
+</dialog>
+
+<!-- Target Selection Modal -->
+<dialog id="target-modal">
+  <div class="modal-header">
+    <span class="modal-title" id="target-modal-title">Scegli il bersaglio</span>
+  </div>
+  <p id="target-modal-sub" style="font-size:12.5px; color:#cfc7be; margin-bottom:14px;"></p>
+  <div style="display:flex; gap:8px;">
+    <button class="btn-sub" style="flex:1;" id="target-btn-self">Te stesso</button>
+    <button class="btn-main" style="flex:1;" id="target-btn-opponent">Avversario</button>
+  </div>
+</dialog>
+
+<!-- Round End Modal -->
+<dialog id="round-end-modal">
+  <div class="modal-header">
+    <span class="modal-title" id="round-end-title">Fine Mano</span>
+  </div>
+  <div id="round-end-summary"></div>
+  <button class="btn-main" style="width:100%; margin-top:6px;" onclick="onNextRoundClick()">Prossima Mano →</button>
+</dialog>
+
+<!-- Game End Modal -->
+<dialog id="game-end-modal">
+  <div class="modal-header">
+    <span class="modal-title" id="game-end-title">🏆 Partita Finita</span>
+  </div>
+  <div id="game-end-summary"></div>
+  <button class="btn-main" style="width:100%; margin-top:6px;" onclick="onNewGameFromEndClick()">Nuova Partita</button>
+</dialog>
+
+<!-- Exit Confirmation Dialog -->
+<dialog id="exit-confirm-dialog">
+  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:#ef4444;">Abbandonare la partita?</h3>
+  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Tornando alla Home la partita in corso verrà interrotta e persa.</p>
+  <div style="display:flex; gap:8px;">
+    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('exit-confirm-dialog').close()">Annulla</button>
+    <button class="btn-main" style="flex:1; background:#dc2626; color:#fff;" onclick="document.getElementById('exit-confirm-dialog').close(); navigateScreen('screen-home');">Esci</button>
+  </div>
+</dialog>
+
+<!-- Restart Confirmation Dialog -->
+<dialog id="restart-confirm-dialog">
+  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--gold);">Ricominciare la partita?</h3>
+  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Punteggi azzerati, si riparte dalla Mano 1.</p>
+  <div style="display:flex; gap:8px;">
+    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('restart-confirm-dialog').close()">Annulla</button>
+    <button class="btn-main" style="flex:1;" onclick="confirmRestartMatch()">Ricomincia</button>
+  </div>
+</dialog>
+
+<div id="toast"></div>
+
+<script src="app.js"></script>
 </body>
 </html>

@@ -1,28 +1,25 @@
-# Flip 7 AI - Pure HTML, CSS & Vanilla JavaScript PWA
+# Flip 7 — PWA (HTML, CSS & JavaScript puro)
 
-Applicazione web progressiva (PWA) installabile per giocare a Flip 7 contro un'IA, riscritta completamente senza l'utilizzo di Node, npm o strumenti di build.
+Riscrittura completa dell'app, senza dipendenze esterne (niente CDN, niente framework): funziona interamente offline una volta installata.
 
----
-
-## 🚀 Istruzioni di Avvio
-
-Non è richiesto alcun processo di build o comando npm!
-
-Puoi aprire direttamente il file [`index.html`](file:///Users/Roberto/.gemini/antigravity/scratch/flip7-ai/index.html) in qualsiasi browser web moderno, oppure servirlo tramite un semplice HTTP server:
-
+## Avvio
+Nessun build richiesto. Apri `index.html` in un browser moderno, oppure servilo con:
 ```bash
-# Esempio server locale con Python
 python3 -m http.server 8080
 ```
 
-Poi apri `http://localhost:8080` nel browser.
+## Cosa è cambiato rispetto alla versione precedente
+- **Nessuna dipendenza da CDN** (prima usava Tailwind da jsdelivr, che rompeva il funzionamento offline della PWA).
+- **Icone reali** (SVG, coerenti dentro/fuori l'app) — prima il manifest puntava a PNG inesistenti.
+- **Menu introduttivo** con logo, spiegazione rapida, regole, statistiche e opzioni.
+- **Schermata di gioco compatta**: tutto in una sola schermata senza scroll, niente più pannelli sovrapposti — barra di stato in alto, le due mani al centro, HIT/STAY in basso.
+- **Mazzo corretto**: 94 carte reali (prima ne mancavano 4 modificatori: +4, +6, +8, +10).
+- **IA basata su probabilità reali**: calcola l'esatta probabilità di BUST guardando le carte rimaste nel mazzo, invece di soglie arbitrarie. Tre livelli (Facile/Normale/Difficile) più un quarto livello **AI Suprema** che usa Google Gemini (con la stessa chiave API impostabile in Opzioni), con rilevamento automatico del modello Flash più recente disponibile.
+- **Statistiche per livello di avversario**, pull-to-refresh per forzare l'aggiornamento della cache, banner di installazione per Android e iOS.
 
----
-
-## 📂 Struttura del Progetto
-
-- [`index.html`](file:///Users/Roberto/.gemini/antigravity/scratch/flip7-ai/index.html): Struttura HTML5 semantica e responsive per desktop e mobile.
-- [`style.css`](file:///Users/Roberto/.gemini/antigravity/scratch/flip7-ai/style.css): Stili CSS custom per carte da gioco, animazioni e layout.
-- [`app.js`](file:///Users/Roberto/.gemini/antigravity/scratch/flip7-ai/app.js): Motore di gioco pure Vanilla JS (gestione turno, mazzo 94 carte, calcolo punteggi, carte Azione/Modificatore, intelligenza artificiale a 3 difficoltà).
-- [`sw.js`](file:///Users/Roberto/.gemini/antigravity/scratch/flip7-ai/sw.js): Service Worker per il funzionamento completamente offline.
-- [`manifest.webmanifest`](file:///Users/Roberto/.gemini/antigravity/scratch/flip7-ai/manifest.webmanifest): Configurazione PWA per l'installazione su mobile e desktop.
+## Struttura
+- `index.html` — struttura, stile e schermate (home, setup, partita, finestre di dialogo).
+- `app.js` — motore di gioco, IA, integrazione Gemini, rendering, logica PWA.
+- `sw.js` — service worker per il funzionamento offline.
+- `manifest.webmanifest` — configurazione PWA/installazione.
+- `assets/` — logo e icone (SVG).

@@ -1,21 +1,30 @@
 {
-  "name": "Flip 7 AI",
-  "short_name": "Flip 7 AI",
-  "description": "Gioca a Flip 7 contro un'IA in puro HTML, CSS e JavaScript!",
+  "name": "Flip 7",
+  "short_name": "Flip 7",
+  "description": "Gioca a Flip 7 contro l'IA — un gioco di carte push-your-luck.",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#0f172a",
+  "orientation": "portrait",
+  "background_color": "#12100f",
+  "theme_color": "#12100f",
   "icons": [
     {
-      "src": "icon-192.png",
+      "src": "assets/icons/icon-192.svg",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/svg+xml",
+      "purpose": "any"
     },
     {
-      "src": "icon-512.png",
+      "src": "assets/icons/icon-512.svg",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }
