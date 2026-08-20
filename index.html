@@ -285,6 +285,23 @@ body {
 .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounceDot { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1.2); opacity: 1; } }
 
+.game-message-bar {
+  width: 100%;
+  max-width: 480px;
+  min-height: 18px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary-light);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  padding: 2px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-message-bar.show { opacity: 1; }
+
 .arena {
   width: 100%;
   max-width: 480px;
@@ -388,6 +405,16 @@ body {
 }
 @keyframes cardPop { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .card-chip.chip-number { background: linear-gradient(160deg, #1d4ed8, #1e1b4b); border-color: #60a5fa; color: #fff; font-size: 19px; }
+.card-chip.chip-bust-duplicate {
+  background: linear-gradient(160deg, #dc2626, #450a0a);
+  border-color: #f87171;
+  box-shadow: 0 0 10px rgba(248,113,113,0.6);
+  animation: bustPulse 1s ease-in-out infinite;
+}
+@keyframes bustPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
 .card-chip.chip-modifier { background: linear-gradient(160deg, #f97316, #7c2d12); border-color: #fdba74; color: #fff; font-size: 13px; }
 .card-chip.chip-action { background: linear-gradient(160deg, var(--purple), #581c87); border-color: #c084fc; color: #fff; font-size: 16px; }
 
@@ -596,6 +623,8 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
     <div id="status-right" class="status-right">Tu <strong>0</strong> · IA <strong>0</strong></div>
   </div>
 
+  <div id="game-message-bar" class="game-message-bar">&nbsp;</div>
+
   <div class="arena">
     <div id="ai-zone" class="player-zone">
       <div class="zone-header">
@@ -678,10 +707,11 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
   </div>
   <div class="rules-section">
     <h4 style="color:#c084fc;">⚡ Carte Azione</h4>
+    <p>Vanno sempre all'avversario in automatico (nessuna scelta da fare). Restano visibili sul tavolo come promemoria, ma non contano mai nel punteggio.</p>
     <ul>
-      <li><strong>FREEZE:</strong> costringe un giocatore a fare STAY subito.</li>
-      <li><strong>FLIP THREE:</strong> obbliga a pescare 3 carte di fila.</li>
-      <li><strong>SECOND CHANCE:</strong> ti salva da un BUST, poi si scarta.</li>
+      <li><strong>FREEZE:</strong> chi la riceve è costretto a fare STAY subito, con il punteggio che ha in quel momento.</li>
+      <li><strong>FLIP THREE:</strong> chi la riceve deve pescare 3 carte di fila, rischiando il BUST tra una e l'altra.</li>
+      <li><strong>SECOND CHANCE:</strong> ti salva automaticamente da un BUST la prima volta, poi si scarta. Se ne hai già una, quella nuova passa all'avversario.</li>
     </ul>
   </div>
   <button class="btn-main" style="width:100%; margin-top:6px;" onclick="document.getElementById('rules-modal').close()">Ho Capito!</button>
@@ -720,18 +750,6 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
   </div>
   <div id="stats-summary"></div>
   <button class="btn-sub" style="width:100%; margin-top:4px;" onclick="resetStats()">Azzera Statistiche</button>
-</dialog>
-
-<!-- Target Selection Modal -->
-<dialog id="target-modal">
-  <div class="modal-header">
-    <span class="modal-title" id="target-modal-title">Scegli il bersaglio</span>
-  </div>
-  <p id="target-modal-sub" style="font-size:12.5px; color:#cfc7be; margin-bottom:14px;"></p>
-  <div style="display:flex; gap:8px;">
-    <button class="btn-sub" style="flex:1;" id="target-btn-self">Te stesso</button>
-    <button class="btn-main" style="flex:1;" id="target-btn-opponent">Avversario</button>
-  </div>
 </dialog>
 
 <!-- Round End Modal -->

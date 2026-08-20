@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flip7-v1.1';
+const CACHE_NAME = 'flip7-v1.3';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

@@ -13,9 +13,7 @@ let state = {
   currentPlayerIndex: 0,
   dealerIndex: 0,
   roundNumber: 1,
-  phase: 'SETUP', // SETUP | PLAYER_TURN | AI_TURN | CHOOSING_TARGET | ROUND_END | GAME_END
-  pendingEffects: [],
-  currentPendingEffect: null,
+  phase: 'SETUP', // SETUP | PLAYER_TURN | AI_TURN | ROUND_END | GAME_END
   winnerId: null,
   mode: 'normal', // easy | normal | hard | gemini
   p1Name: 'Giocatore',
@@ -101,6 +99,8 @@ function rebuildDeckIfNeeded() {
     for (const c of p.numberCards) activeTableCards.add(c.id);
     for (const c of p.modifierCards) activeTableCards.add(c.id);
     if (p.secondChanceCard) activeTableCards.add(p.secondChanceCard.id);
+    for (const c of p.usedActionCards) activeTableCards.add(c.id);
+    if (p.bustCard) activeTableCards.add(p.bustCard.id);
   }
 
   const cardsToShuffle = [...state.discardPile, ...state.usedCards].filter(c => !activeTableCards.has(c.id));
@@ -133,21 +133,22 @@ function startAmbientMusic() {
   try {
     const master = audioCtx.createGain();
     master.gain.setValueAtTime(0, audioCtx.currentTime);
-    master.gain.linearRampToValueAtTime(0.055, audioCtx.currentTime + 2);
+    master.gain.linearRampToValueAtTime(0.032, audioCtx.currentTime + 2);
     master.connect(audioCtx.destination);
 
     const filter = audioCtx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 800;
-    filter.Q.value = 0.6;
+    filter.frequency.value = 2200;
+    filter.Q.value = 0.4;
     filter.connect(master);
 
-    const oscillators = [110, 164.81, 220].map((f, i) => {
+    // Bright, gentle major triad (C4-E4-G4) instead of a low drone — a light, airy pad.
+    const oscillators = [261.63, 329.63, 392.0].map((f, i) => {
       const osc = audioCtx.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = f;
       const oGain = audioCtx.createGain();
-      oGain.gain.value = i === 0 ? 0.9 : 0.45;
+      oGain.gain.value = i === 0 ? 0.55 : 0.3;
       osc.connect(oGain);
       oGain.connect(filter);
       osc.start();
@@ -155,9 +156,9 @@ function startAmbientMusic() {
     });
 
     const lfo = audioCtx.createOscillator();
-    lfo.frequency.value = 0.06;
+    lfo.frequency.value = 0.045;
     const lfoGain = audioCtx.createGain();
-    lfoGain.gain.value = 260;
+    lfoGain.gain.value = 320;
     lfo.connect(lfoGain);
     lfoGain.connect(filter.frequency);
     lfo.start();
@@ -278,15 +279,13 @@ function startNewGame() {
   state.discardPile = [];
   state.usedCards = [];
   state.players = [
-    { id: 'player-human', name: state.p1Name, isHuman: true, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [] },
-    { id: 'player-ai', name: 'CPU', isHuman: false, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [] }
+    { id: 'player-human', name: state.p1Name, isHuman: true, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [], bustCard: null },
+    { id: 'player-ai', name: 'CPU', isHuman: false, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [], bustCard: null }
   ];
   state.currentPlayerIndex = 0;
   state.dealerIndex = 0;
   state.roundNumber = 1;
   state.phase = 'SETUP';
-  state.pendingEffects = [];
-  state.currentPendingEffect = null;
   state.winnerId = null;
   state.undoStack = [];
   state.isAiBusy = false;
@@ -296,6 +295,9 @@ function startNewGame() {
   startRound();
 }
 
+// Each round starts with everyone at 0 cards — there is no automatic "opening deal".
+// The player after the dealer simply takes the first normal turn (Hit or Stay), exactly
+// like every other turn in the round.
 function startRound() {
   state.players.forEach(p => {
     p.roundScore = 0;
@@ -304,20 +306,14 @@ function startRound() {
     p.modifierCards = [];
     p.secondChanceCard = undefined;
     p.usedActionCards = [];
+    p.bustCard = null;
   });
 
   state.discardPile = [...state.discardPile, ...state.usedCards];
   state.usedCards = [];
-  state.pendingEffects = [];
-  state.currentPendingEffect = null;
   state.undoStack = [];
 
   rebuildDeckIfNeeded();
-
-  const startIndex = (state.dealerIndex + 1) % state.players.length;
-  for (let i = 0; i < state.players.length; i++) {
-    dealInitialCard((startIndex + i) % state.players.length);
-  }
 
   state.currentPlayerIndex = (state.dealerIndex + 1) % state.players.length;
   const firstPlayer = state.players[state.currentPlayerIndex];
@@ -327,12 +323,8 @@ function startRound() {
   triggerAITurnIfNeeded();
 }
 
-function dealInitialCard(playerIndex) {
-  rebuildDeckIfNeeded();
-  if (state.drawPile.length === 0) return;
-  const card = state.drawPile.shift();
-  state.usedCards.push(card);
-  applyCardToPlayer(playerIndex, card, true);
+function getOpponent(player) {
+  return state.players.find(p => p.id !== player.id);
 }
 
 function drawCard(playerIndex) {
@@ -344,11 +336,20 @@ function drawCard(playerIndex) {
   playDrawSound();
   const card = state.drawPile.shift();
   state.usedCards.push(card);
-  applyCardToPlayer(playerIndex, card, false);
+
+  const extraDraws = applyCardEffect(playerIndex, card);
+
+  if (player.status === 'FLIP_7') { endRoundImmediatelyOnFlip7(playerIndex); return; }
+  if (player.status === 'BUSTED') { checkTurnOrRoundEnd(); return; }
+
+  if (extraDraws.length > 0) {
+    // Drew a Flip Three — it doesn't end your own turn, you continue afterward.
+    setTimeout(() => processForcedDrawQueue(extraDraws, player.id), 550);
+  } else {
+    checkTurnOrRoundEnd();
+  }
 }
 
-// inForcedSequence=true (used during initial deal & FLIP_THREE forced draws) skips the
-// automatic turn-advance for "safe" outcomes, since the caller is driving the sequence itself.
 function opponentLabel() {
   return state.mode === 'gemini' ? 'IA' : 'CPU';
 }
@@ -362,14 +363,26 @@ function snapshotForUndo() {
     currentPlayerIndex: state.currentPlayerIndex,
     dealerIndex: state.dealerIndex,
     roundNumber: state.roundNumber,
-    phase: state.phase,
-    pendingEffects: JSON.parse(JSON.stringify(state.pendingEffects)),
-    currentPendingEffect: state.currentPendingEffect ? JSON.parse(JSON.stringify(state.currentPendingEffect)) : null
+    phase: state.phase
   });
   if (state.undoStack.length > 40) state.undoStack.shift();
 }
 
-function applyCardToPlayer(playerIndex, card, inForcedSequence) {
+function modifierLabel(card) {
+  return card.effect === 'MULTIPLIER_TWO' ? 'x2' : `+${card.value}`;
+}
+
+// Applies a card's immediate effect to a player and shows an explanatory message.
+// Returns an array of target indices still owed a forced draw — empty for everything
+// except Flip Three, which owes its target 3 draws. Never decides what happens to the
+// turn afterward; callers (drawCard / processForcedDrawQueue) handle that, since the
+// same logic is shared between a normal draw and a forced one.
+//
+// Freeze and Flip Three are never a choice: per the rules they go to "any player,
+// including yourself", but giving a penalty card to yourself is never useful, so they
+// always go to the opponent automatically — the only exception is when the opponent is
+// no longer active, in which case there's nobody else to give it to.
+function applyCardEffect(playerIndex, card) {
   const player = state.players[playerIndex];
   const whoName = player.isHuman ? state.p1Name : opponentLabel();
 
@@ -378,107 +391,81 @@ function applyCardToPlayer(playerIndex, card, inForcedSequence) {
 
     if (hasDuplicate) {
       if (player.secondChanceCard) {
-        showToast(`🛡️ ${whoName} si salva dal BUST con Second Chance!`);
+        showGameMessage(`🛡️ ${whoName} pesca un altro ${card.value} ma si salva con Second Chance!`);
         state.discardPile.push(card, player.secondChanceCard);
         player.secondChanceCard = undefined;
-        if (!inForcedSequence) checkTurnOrRoundEnd(); else renderGame();
-        return;
+      } else {
+        playBustSound();
+        // Keep the duplicate card visible next to the original so it's clear why it's a bust.
+        player.bustCard = card;
+        showGameMessage(`💥 ${whoName} pesca un altro ${card.value}: BUST! Mano azzerata.`);
+        player.status = 'BUSTED';
+        player.roundScore = 0;
       }
-      playBustSound();
-      showToast(`💥 ${whoName} è andato in BUST!`);
-      player.status = 'BUSTED';
-      player.roundScore = 0;
-      checkTurnOrRoundEnd();
-      return;
+      return [];
     }
 
     player.numberCards.push(card);
     const res = calculateRoundScore(player);
     if (res.isFlip7) {
-      showToast(`🎉 FLIP 7! ${whoName} +15 punti bonus!`);
+      showGameMessage(`🎉 FLIP 7! ${whoName} ha 7 numeri diversi: +15 punti bonus!`);
       playWinSound();
       player.status = 'FLIP_7';
       player.roundScore = res.score;
-      endRoundImmediatelyOnFlip7(playerIndex);
-      return;
+    } else {
+      player.roundScore = res.score;
     }
-    player.roundScore = res.score;
-    if (!inForcedSequence) checkTurnOrRoundEnd(); else renderGame();
-    return;
+    return [];
   }
 
   if (card.type === 'MODIFIER') {
     player.modifierCards.push(card);
     player.roundScore = calculateRoundScore(player).score;
-    if (!inForcedSequence) checkTurnOrRoundEnd(); else renderGame();
-    return;
+    const explain = card.effect === 'MULTIPLIER_TWO' ? 'raddoppia la somma dei numeri' : `aggiunge ${card.value} punti fissi`;
+    showGameMessage(`➕ ${whoName} pesca ${modifierLabel(card)}: ${explain}.`);
+    return [];
   }
 
   if (card.type === 'ACTION') {
     if (card.effect === 'SECOND_CHANCE') {
       if (!player.secondChanceCard) {
         player.secondChanceCard = card;
+        showGameMessage(`🛡️ ${whoName} pesca Second Chance: salva da un BUST, poi si scarta.`);
       } else {
         const recipient = state.players.find((p, idx) => idx !== playerIndex && !p.secondChanceCard && p.status === 'ACTIVE');
         if (recipient) {
           recipient.secondChanceCard = card;
-          showToast(`🛡️ Second Chance passata a ${recipient.isHuman ? state.p1Name : opponentLabel()}`);
+          showGameMessage(`🛡️ Second Chance passata a ${recipient.isHuman ? state.p1Name : opponentLabel()} (${whoName} ne aveva già una).`);
         } else {
           state.discardPile.push(card);
+          showGameMessage(`🛡️ ${whoName} pesca Second Chance, ma non c'è nessuno a cui darla: scartata.`);
         }
       }
-      if (!inForcedSequence) checkTurnOrRoundEnd(); else renderGame();
-      return;
+      return [];
     }
 
-    if (card.effect === 'FREEZE' || card.effect === 'FLIP_THREE') {
-      // Shown on the table like any other card, but never counted in the score.
+    if (card.effect === 'FREEZE') {
       player.usedActionCards.push(card);
+      const opponent = getOpponent(player);
+      const target = (opponent && opponent.status === 'ACTIVE') ? opponent : player;
+      const targetName = target.isHuman ? state.p1Name : opponentLabel();
+      showGameMessage(`❄️ ${whoName} pesca FREEZE: ${targetName} si ferma con il punteggio attuale.`);
+      target.status = 'FREEZED';
+      target.roundScore = calculateRoundScore(target).score;
+      return [];
+    }
 
-      const activeTargets = state.players.filter(p => p.status === 'ACTIVE');
-      const effect = { id: `effect-${Date.now()}-${Math.random()}`, type: card.effect, sourcePlayerId: player.id };
-
-      if (activeTargets.length <= 1) {
-        resolveEffectOnTarget(effect, (activeTargets[0] || player).id);
-        return;
-      }
-
-      state.pendingEffects.push(effect);
-      state.phase = 'CHOOSING_TARGET';
-      state.currentPendingEffect = effect;
-      renderGame();
-
-      if (!player.isHuman) triggerAITargetSelectionIfNeeded();
-      else showHumanTargetModal(effect);
-      return;
+    if (card.effect === 'FLIP_THREE') {
+      player.usedActionCards.push(card);
+      const opponent = getOpponent(player);
+      const target = (opponent && opponent.status === 'ACTIVE') ? opponent : player;
+      const targetName = target.isHuman ? state.p1Name : opponentLabel();
+      showGameMessage(`🎲 ${whoName} pesca FLIP THREE: ${targetName} pesca 3 carte di fila!`);
+      const targetIdx = state.players.findIndex(p => p.id === target.id);
+      return [targetIdx, targetIdx, targetIdx];
     }
   }
-}
-
-// Per the rules, Freeze/Flip Three can target yourself or the opponent. Giving it to the
-// opponent does NOT end your own turn — you drew the card, used it, and keep playing.
-// Only freezing yourself ends your turn (a self-Freeze is a forced Stay).
-function resolveEffectOnTarget(effect, targetPlayerId) {
-  const targetPlayer = state.players.find(p => p.id === targetPlayerId);
-  const sourcePlayer = state.players.find(p => p.id === effect.sourcePlayerId);
-  if (!targetPlayer || !sourcePlayer) { checkTurnOrRoundEnd(); return; }
-  const whoName = targetPlayer.isHuman ? state.p1Name : opponentLabel();
-  const targetingSelf = targetPlayer.id === sourcePlayer.id;
-
-  if (effect.type === 'FREEZE') {
-    showToast(`❄️ FREEZE su ${whoName}: costretto a fermarsi.`);
-    targetPlayer.status = 'FREEZED';
-    targetPlayer.roundScore = calculateRoundScore(targetPlayer).score;
-    if (targetingSelf) checkTurnOrRoundEnd();
-    else returnTurnToSource(sourcePlayer);
-    return;
-  }
-
-  if (effect.type === 'FLIP_THREE') {
-    showToast(`🎲 FLIP THREE su ${whoName}: pesca 3 carte di fila!`);
-    processFlipThreeDraw(state.players.findIndex(p => p.id === targetPlayerId), 3, sourcePlayer.id);
-    return;
-  }
+  return [];
 }
 
 function returnTurnToSource(sourcePlayer) {
@@ -489,45 +476,40 @@ function returnTurnToSource(sourcePlayer) {
   triggerAITurnIfNeeded();
 }
 
-function resolveTargetSelection(targetPlayerId) {
-  if (!state.currentPendingEffect) return;
-  snapshotForUndo();
-  const effect = state.currentPendingEffect;
-  state.pendingEffects = state.pendingEffects.filter(e => e.id !== effect.id);
-  state.currentPendingEffect = null;
-  resolveEffectOnTarget(effect, targetPlayerId);
-}
+// Processes one forced draw at a time (paced 550ms apart). If a forced draw is itself a
+// Flip Three, its 3 draws are inserted at the FRONT of the queue so they resolve before
+// continuing whatever was left — this naturally handles a Flip Three nested inside
+// another one, however deep, without any separate pause/resume bookkeeping. Any queued
+// draw for a player who busted (or was otherwise deactivated) along the way is simply
+// skipped rather than aborting the whole queue, so unrelated remaining draws still happen.
+function processForcedDrawQueue(queue, returnToPlayerId) {
+  const remaining = queue.filter(idx => state.players[idx].status === 'ACTIVE');
 
-// remainingDraws counts down the forced draws; returnToPlayerId is always the original
-// drawer of the Flip Three card — once the forced draws finish, control returns to them
-// (whether they targeted themselves or the opponent), not to the next player in rotation.
-function processFlipThreeDraw(targetIdx, remainingDraws, returnToPlayerId) {
+  if (remaining.length === 0) {
+    const sourcePlayer = returnToPlayerId ? state.players.find(p => p.id === returnToPlayerId) : null;
+    if (sourcePlayer && sourcePlayer.status === 'ACTIVE') returnTurnToSource(sourcePlayer);
+    else checkTurnOrRoundEnd();
+    return;
+  }
+
+  const targetIdx = remaining[0];
+  const rest = remaining.slice(1);
   const targetPlayer = state.players[targetIdx];
-  if (remainingDraws <= 0 || targetPlayer.status !== 'ACTIVE') { finishFlipThree(returnToPlayerId); return; }
 
   rebuildDeckIfNeeded();
-  if (state.drawPile.length === 0) { finishFlipThree(returnToPlayerId); return; }
+  if (state.drawPile.length === 0) {
+    processForcedDrawQueue(rest, returnToPlayerId);
+    return;
+  }
 
   const card = state.drawPile.shift();
   state.usedCards.push(card);
-  applyCardToPlayer(targetIdx, card, true);
+  const extraDraws = applyCardEffect(targetIdx, card);
 
-  if (targetPlayer.status === 'BUSTED' || targetPlayer.status === 'FLIP_7') return; // already fully resolved (round-end path)
+  if (targetPlayer.status === 'FLIP_7') { endRoundImmediatelyOnFlip7(targetIdx); return; }
 
-  if (remainingDraws - 1 > 0) {
-    setTimeout(() => {
-      if (state.phase === 'CHOOSING_TARGET') return; // a nested action card is being resolved first
-      processFlipThreeDraw(targetIdx, remainingDraws - 1, returnToPlayerId);
-    }, 550);
-  } else if (state.phase !== 'CHOOSING_TARGET') {
-    finishFlipThree(returnToPlayerId);
-  }
-}
-
-function finishFlipThree(returnToPlayerId) {
-  const sourcePlayer = returnToPlayerId ? state.players.find(p => p.id === returnToPlayerId) : null;
-  if (sourcePlayer && sourcePlayer.status === 'ACTIVE') returnTurnToSource(sourcePlayer);
-  else checkTurnOrRoundEnd();
+  const nextQueue = extraDraws.concat(rest);
+  setTimeout(() => processForcedDrawQueue(nextQueue, returnToPlayerId), 550);
 }
 
 function playerStay(playerIndex) {
@@ -541,17 +523,6 @@ function playerStay(playerIndex) {
 }
 
 function checkTurnOrRoundEnd() {
-  if (state.pendingEffects.length > 0 && !state.currentPendingEffect) {
-    const effect = state.pendingEffects[0];
-    state.currentPendingEffect = effect;
-    state.phase = 'CHOOSING_TARGET';
-    renderGame();
-    const source = state.players.find(p => p.id === effect.sourcePlayerId);
-    if (source && !source.isHuman) triggerAITargetSelectionIfNeeded();
-    else if (source) showHumanTargetModal(effect);
-    return;
-  }
-
   const activePlayers = state.players.filter(p => p.status === 'ACTIVE');
   if (activePlayers.length === 0) { endRound(); return; }
 
@@ -692,22 +663,6 @@ function chooseAIActionHeuristic(aiIndex, level) {
   return evGain > evLoss ? 'HIT' : 'STAY';
 }
 
-function chooseAITarget(aiIndex, effectType) {
-  const ai = state.players[aiIndex];
-  const human = state.players.find(p => p.isHuman);
-  if (!human || human.status !== 'ACTIVE') return ai.id;
-
-  if (effectType === 'FREEZE') {
-    return (human.roundScore > 8 || human.roundScore >= ai.roundScore * 0.5) ? human.id : ai.id;
-  }
-  if (effectType === 'FLIP_THREE') {
-    const aiStats = computeHitStats(ai);
-    if (countUniqueNumbers(ai) >= 5 && aiStats.bustProb < 0.3) return ai.id;
-    return human.id;
-  }
-  return human.id;
-}
-
 async function callGeminiRaw(prompt) {
   const apiKey = localStorage.getItem('flip7_gemini_key') || '';
   if (!apiKey) return null;
@@ -754,6 +709,7 @@ REGOLE ESSENZIALI:
 - Se peschi un numero che hai già, vai in BUST e perdi tutti i punti della mano (a meno di avere Second Chance).
 - 7 numeri diversi = FLIP 7: mano finita subito, bonus +15.
 - Punteggio mano = (somma numeri, ×2 se hai il modificatore x2) + somma dei +N. Vince chi arriva primo a 200 punti totali.
+- FREEZE/FLIP THREE non si scelgono: vanno sempre automaticamente all'avversario.
 
 STATO ATTUALE:
 - Tuoi numeri: ${heldNumbers} (${countUniqueNumbers(ai)}/7 unici)
@@ -780,33 +736,6 @@ async function chooseGeminiAction(aiIndex) {
     }
   }
   return chooseAIActionHeuristic(aiIndex, 'hard');
-}
-
-async function chooseGeminiTarget(aiIndex, effectType) {
-  const ai = state.players[aiIndex];
-  const human = state.players.find(p => p.isHuman);
-  const prompt = `Sei un'IA esperta di Flip 7. Hai pescato una carta ${effectType === 'FREEZE' ? 'FREEZE (il bersaglio è costretto a fermarsi subito con il punteggio attuale)' : 'FLIP THREE (il bersaglio deve pescare 3 carte di fila, rischiando il BUST)'}.
-Devi scegliere il bersaglio: te stesso oppure l'avversario.
-
-STATO:
-- Tuo punteggio mano potenziale: ${ai.roundScore}, totale: ${ai.score}
-- Punteggio mano potenziale avversario: ${human.roundScore}, totale: ${human.score}
-- Avversario ha Second Chance: ${human.secondChanceCard ? 'sì' : 'no'}
-
-Scegli la mossa più conveniente per te. Rispondi SOLO con un JSON come ultima riga, es: {"target": "opponent"} oppure {"target": "self"}`;
-
-  const text = await callGeminiRaw(prompt);
-  if (text) {
-    const matches = text.match(/\{[^{}]*\}/g);
-    if (matches) {
-      try {
-        const obj = JSON.parse(matches[matches.length - 1]);
-        if (obj.target === 'self') return ai.id;
-        if (obj.target === 'opponent') return human.id;
-      } catch (e) { /* fall through to heuristic */ }
-    }
-  }
-  return chooseAITarget(aiIndex, effectType);
 }
 
 function triggerAITurnIfNeeded() {
@@ -836,36 +765,13 @@ function triggerAITurnIfNeeded() {
   }
 }
 
-function triggerAITargetSelectionIfNeeded() {
-  if (state.phase !== 'CHOOSING_TARGET' || !state.currentPendingEffect) return;
-  const effect = state.currentPendingEffect;
-  const sourcePlayer = state.players.find(p => p.id === effect.sourcePlayerId);
-  if (!sourcePlayer || sourcePlayer.isHuman) return;
-
-  const aiIdx = state.players.findIndex(p => p.id === sourcePlayer.id);
-  state.isAiBusy = true;
-  setAiThinking(true);
-
-  if (state.mode === 'gemini') {
-    chooseGeminiTarget(aiIdx, effect.type).then(targetId => {
-      setTimeout(() => { state.isAiBusy = false; setAiThinking(false); resolveTargetSelection(targetId); }, 400);
-    });
-  } else {
-    setTimeout(() => {
-      state.isAiBusy = false;
-      setAiThinking(false);
-      resolveTargetSelection(chooseAITarget(aiIdx, effect.type));
-    }, 850);
-  }
-}
-
 /* =========================================================
    6. RENDERING
    ========================================================= */
-function createCardChip(card) {
+function createCardChip(card, isBustDuplicate) {
   const div = document.createElement('div');
   if (card.type === 'NUMBER') {
-    div.className = 'card-chip chip-number';
+    div.className = 'card-chip chip-number' + (isBustDuplicate ? ' chip-bust-duplicate' : '');
     div.textContent = card.value;
   } else if (card.type === 'MODIFIER') {
     div.className = 'card-chip chip-modifier';
@@ -895,6 +801,9 @@ function renderPlayerZone(player, prefix, isActiveTurn, inRound) {
   const cardsBox = document.getElementById(`${prefix}-cards`);
   cardsBox.innerHTML = '';
   player.numberCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
+  // The duplicate card that caused the BUST stays visible right next to the original,
+  // clearly marked, so it's obvious which number was doubled.
+  if (player.bustCard) cardsBox.appendChild(createCardChip(player.bustCard, true));
   player.modifierCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
   if (player.secondChanceCard) cardsBox.appendChild(createCardChip(player.secondChanceCard));
   // Spent action cards (Freeze/Flip Three) stay visible on the table too, purely for
@@ -921,7 +830,7 @@ function renderGame() {
   document.getElementById('status-right').innerHTML =
     `Tu <strong>${human.score}</strong> · ${oppLabel} <strong>${ai.score}</strong> · 🂠<strong>${state.drawPile.length}</strong>`;
 
-  const inRound = state.phase === 'PLAYER_TURN' || state.phase === 'AI_TURN' || state.phase === 'CHOOSING_TARGET';
+  const inRound = state.phase === 'PLAYER_TURN' || state.phase === 'AI_TURN';
   const currentPlayer = state.players[state.currentPlayerIndex];
 
   renderPlayerZone(human, 'human', inRound && currentPlayer && currentPlayer.isHuman, inRound);
@@ -945,8 +854,6 @@ function renderGame() {
     promptEl.innerHTML = 'Premi <strong>HIT</strong> per pescare o <strong>STAY</strong> per fermarti.';
   } else if (state.phase === 'AI_TURN') {
     promptEl.textContent = `${oppLabel} sta decidendo...`;
-  } else if (state.phase === 'CHOOSING_TARGET') {
-    promptEl.textContent = currentPlayer.isHuman ? 'Scegli il bersaglio nella finestra.' : `${oppLabel} sta scegliendo il bersaglio...`;
   } else {
     promptEl.innerHTML = '&nbsp;';
   }
@@ -955,26 +862,6 @@ function renderGame() {
   document.getElementById('btn-hit').disabled = !canAct;
   document.getElementById('btn-stay').disabled = !canAct;
   document.getElementById('btn-undo').disabled = !canUndo();
-}
-
-function showHumanTargetModal(effect) {
-  const isFreeze = effect.type === 'FREEZE';
-  document.getElementById('target-modal-title').textContent = isFreeze ? '❄️ Scegli chi congelare' : '🎲 Scegli il bersaglio';
-  document.getElementById('target-modal-sub').textContent = isFreeze
-    ? 'Il giocatore scelto è costretto a fermarsi subito con il punteggio attuale.'
-    : 'Il giocatore scelto dovrà pescare 3 carte di fila.';
-
-  const human = state.players.find(p => p.isHuman);
-  const ai = state.players.find(p => !p.isHuman);
-  const selfBtn = document.getElementById('target-btn-self');
-  const oppBtn = document.getElementById('target-btn-opponent');
-
-  selfBtn.textContent = state.p1Name;
-  oppBtn.textContent = opponentLabel();
-  selfBtn.onclick = () => { document.getElementById('target-modal').close(); resolveTargetSelection(human.id); };
-  oppBtn.onclick = () => { document.getElementById('target-modal').close(); resolveTargetSelection(ai.id); };
-
-  document.getElementById('target-modal').showModal();
 }
 
 function showRoundEndModal(gains) {
@@ -1025,7 +912,7 @@ function onStayClick() {
 }
 
 function canUndo() {
-  return state.undoStack.length > 0 && !state.isAiBusy && state.phase !== 'CHOOSING_TARGET' &&
+  return state.undoStack.length > 0 && !state.isAiBusy &&
          state.phase !== 'ROUND_END' && state.phase !== 'GAME_END';
 }
 
@@ -1040,12 +927,6 @@ function onUndoClick() {
   state.dealerIndex = prev.dealerIndex;
   state.roundNumber = prev.roundNumber;
   state.phase = prev.phase;
-  state.pendingEffects = prev.pendingEffects;
-  state.currentPendingEffect = prev.currentPendingEffect;
-
-  const targetModal = document.getElementById('target-modal');
-  if (targetModal.open) targetModal.close();
-
   renderGame();
 }
 
@@ -1269,6 +1150,21 @@ function showToast(msg) {
   t.classList.add('show');
   clearTimeout(showToast._timer);
   showToast._timer = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+// In-flow message strip for game events (bust, Flip 7, Freeze, Flip Three, modifiers...).
+// Unlike the floating toast, this always has its own reserved space between the status
+// bar and the table, so it can never cover the cards or the HIT/STAY buttons.
+function showGameMessage(msg) {
+  const bar = document.getElementById('game-message-bar');
+  if (!bar) return;
+  bar.textContent = msg;
+  bar.classList.add('show');
+  clearTimeout(showGameMessage._timer);
+  showGameMessage._timer = setTimeout(() => {
+    bar.classList.remove('show');
+    setTimeout(() => { if (!bar.classList.contains('show')) bar.textContent = '\u00A0'; }, 260);
+  }, 2600);
 }
 
 /* =========================================================
