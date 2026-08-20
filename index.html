@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Flip 7 AI</title>
+  <meta name="description" content="Gioca a Flip 7 contro l'IA! PWA in puro HTML, CSS e JavaScript Vanilla.">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between select-none font-sans">
+
+  <!-- HEADER STATICO (Sempre visibile e fisso) -->
+  <header class="header border-b border-slate-800 bg-slate-900/90 backdrop-blur-md px-4 py-3 sticky top-0 z-40 flex justify-between items-center max-w-4xl mx-auto w-full">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center font-extrabold text-slate-950 text-xl shadow-md">
+        7
+      </div>
+      <div>
+        <h1 class="font-extrabold text-white text-base sm:text-lg tracking-tight">Flip 7 AI</h1>
+        <div class="text-[10px] text-slate-400">PWA Vanilla</div>
+      </div>
+    </div>
+
+    <!-- Scores Overview Sempre Visibile -->
+    <div class="flex items-center space-x-4 bg-slate-950/80 px-4 py-1.5 rounded-full border border-slate-800 text-xs">
+      <div>👤 <strong id="header-human-score" class="text-amber-400 font-black text-sm">0</strong> pt</div>
+      <span class="text-slate-600">vs</span>
+      <div>🤖 <strong id="header-ai-score" class="text-amber-400 font-black text-sm">0</strong> pt</div>
+      <span class="text-slate-600">|</span>
+      <div class="text-amber-400 font-bold" id="header-round-num">Mano 1</div>
+    </div>
+
+    <button id="btn-rules" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs font-semibold">
+      📜 Regole
+    </button>
+  </header>
+
+  <!-- MAIN CONTAINER CON TUTTI I FRAME PERMANENTEMENTE VISIBILI -->
+  <main class="max-w-4xl w-full mx-auto p-4 flex-1 flex flex-col space-y-4">
+    
+    <!-- FRAME 1: BANNER EVENTI (Sempre visibile in alto) -->
+    <div id="event-banner" class="w-full bg-slate-900/90 border border-amber-500/40 rounded-xl p-3 flex items-center justify-between shadow-md">
+      <div class="flex items-center space-x-3">
+        <span id="event-banner-icon" class="text-2xl">🎮</span>
+        <div>
+          <div id="event-banner-text" class="text-sm font-extrabold text-amber-300">
+            Benvenuto in Flip 7 AI!
+          </div>
+          <div id="event-banner-sub" class="text-[11px] text-slate-400">
+            Premi "Nuova Partita" o fai le tue mosse con i pulsanti sotto.
+          </div>
+        </div>
+      </div>
+      <div id="event-banner-action"></div>
+    </div>
+
+    <!-- FRAME 2: AREA IA (Flip 7 Bot - Sempre Visibile) -->
+    <div id="ai-area" class="player-area rounded-2xl p-4 border bg-slate-900/70 border-slate-700/60 shadow-lg">
+      <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+        <div class="flex items-center space-x-3">
+          <div class="w-11 h-11 rounded-full bg-gradient-to-tr from-slate-700 to-slate-800 border border-slate-600 flex items-center justify-center text-2xl font-bold">
+            🤖
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h3 class="font-extrabold text-white text-lg">IA (Flip 7 Bot)</h3>
+              <span id="ai-status-badge" class="badge-status status-active">ATTIVO</span>
+            </div>
+            <div class="text-xs text-slate-300 flex items-center space-x-2 mt-1">
+              <span>Punteggio Totale: <strong id="ai-total-score" class="text-amber-400 text-sm font-black">0 pt</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-4">
+          <div class="bg-slate-950/80 border border-emerald-500/40 rounded-xl px-3 py-1.5 text-center shadow-inner">
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Mano Potenziale</div>
+            <div id="ai-round-score" class="text-xl sm:text-2xl font-black text-emerald-400 leading-none mt-0.5">0 pt</div>
+          </div>
+
+          <div class="text-right min-w-[70px]">
+            <div class="text-[10px] text-slate-400 font-semibold uppercase">Valori Unici</div>
+            <div class="text-xl font-black text-amber-400">
+              <span id="ai-unique-count">0</span> <span class="text-xs font-normal text-slate-400">/ 7</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="ai-cards" class="cards-container min-h-[148px] h-[148px] p-2 bg-slate-950/60 rounded-xl border border-slate-800/80 flex items-center space-x-3 overflow-x-auto">
+      </div>
+    </div>
+
+    <!-- FRAME 3: INDICATORE IA STA PENSANDO (Spazio riservato fisso) -->
+    <div class="h-6 flex items-center justify-center">
+      <div id="ai-thinking" class="hidden text-center py-1 px-4 bg-purple-950/80 border border-purple-500/50 rounded-full text-purple-200 text-xs font-bold w-fit mx-auto">
+        🤖 L'IA sta valutando la mossa...
+      </div>
+    </div>
+
+    <!-- FRAME 4: AREA GIOCATORE UMANO (Sempre Visibile) -->
+    <div id="human-area" class="player-area rounded-2xl p-4 border bg-slate-900/70 border-slate-700/60 shadow-lg">
+      <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
+        <div class="flex items-center space-x-3">
+          <div class="w-11 h-11 rounded-full bg-gradient-to-tr from-slate-700 to-slate-800 border border-slate-600 flex items-center justify-center text-2xl font-bold">
+            👤
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h3 class="font-extrabold text-white text-lg">Giocatore</h3>
+              <span id="human-status-badge" class="badge-status status-active">ATTIVO</span>
+            </div>
+            <div class="text-xs text-slate-300 flex items-center space-x-2 mt-1">
+              <span>Punteggio Totale: <strong id="human-total-score" class="text-amber-400 text-sm font-black">0 pt</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-4">
+          <div class="bg-slate-950/80 border border-emerald-500/40 rounded-xl px-3 py-1.5 text-center shadow-inner">
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Mano Potenziale</div>
+            <div id="human-round-score" class="text-xl sm:text-2xl font-black text-emerald-400 leading-none mt-0.5">0 pt</div>
+          </div>
+
+          <div class="text-right min-w-[70px]">
+            <div class="text-[10px] text-slate-400 font-semibold uppercase">Valori Unici</div>
+            <div class="text-xl font-black text-amber-400">
+              <span id="human-unique-count">0</span> <span class="text-xs font-normal text-slate-400">/ 7</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="human-cards" class="cards-container min-h-[148px] h-[148px] p-2 bg-slate-950/60 rounded-xl border border-slate-800/80 flex items-center space-x-3 overflow-x-auto">
+      </div>
+    </div>
+
+    <!-- FRAME 5: PANNELLO DEI CONTROLLI E AZIONI (Sempre Visibile) -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-xl flex-wrap gap-3 min-h-[72px]">
+      <div class="text-xs text-slate-400 flex items-center space-x-3">
+        <div>Mazzo: <strong id="deck-count" class="text-white font-bold">94</strong></div>
+        <span>•</span>
+        <div>Scarti: <strong id="discard-count" class="text-white font-bold">0</strong></div>
+      </div>
+
+      <div class="flex items-center space-x-2">
+        <button id="btn-start-game" class="py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
+          🎮 Nuova Partita
+        </button>
+
+        <div id="controls-human" class="flex items-center space-x-2">
+          <button id="btn-hit" class="py-2.5 px-5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
+            👉 HIT
+          </button>
+          <button id="btn-stay" class="py-2.5 px-5 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-lg">
+            🛡️ STAY
+          </button>
+        </div>
+
+        <button id="btn-next-round" class="hidden py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
+          Prossima Mano &rarr;
+        </button>
+
+        <button id="btn-restart-game" class="hidden py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-lg">
+          Ricomincia 🔄
+        </button>
+      </div>
+    </div>
+
+    <!-- FRAME 6: LOG EVENTI CRONOLOGICI (Sempre Visibile) -->
+    <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3 h-36 flex flex-col justify-between backdrop-blur-md">
+      <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1 flex items-center justify-between">
+        <span>Log Eventi Partita</span>
+        <span class="text-[10px] text-slate-500">Cronologia recente</span>
+      </div>
+      <div id="log-container" class="overflow-y-auto space-y-1.5 pr-1 flex-1 text-xs">
+      </div>
+    </div>
+
+    <!-- FRAME 7: IMPOSTAZIONI DI GIOCO IN FONDO (Permanente senza Popup) -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
+      <div class="text-xs font-extrabold text-amber-400 uppercase tracking-wider flex items-center space-x-2 border-b border-slate-800 pb-2">
+        <span>⚙️</span>
+        <span>Impostazioni di Gioco</span>
+      </div>
+
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <!-- Sezione Difficoltà IA -->
+        <div class="flex items-center space-x-2">
+          <span class="text-xs font-semibold text-slate-300">Difficoltà IA:</span>
+          <div class="inline-flex rounded-lg bg-slate-950 p-1 border border-slate-800">
+            <button data-level="EASY" class="btn-level py-1 px-3 text-xs font-bold rounded-md text-slate-400 hover:text-white">FACILE</button>
+            <button data-level="NORMAL" class="btn-level py-1 px-3 text-xs font-bold rounded-md bg-amber-500 text-slate-950">NORMALE</button>
+            <button data-level="HARD" class="btn-level py-1 px-3 text-xs font-bold rounded-md text-slate-400 hover:text-white">DIFFICILE</button>
+          </div>
+        </div>
+
+        <!-- Sezione Effetti Sonori -->
+        <div class="flex items-center space-x-3">
+          <span class="text-xs font-semibold text-slate-300">Suoni Audio:</span>
+          <button id="toggle-sound" class="w-12 h-6 rounded-full bg-emerald-500 p-1 flex items-center justify-end transition-colors">
+            <div class="w-4 h-4 rounded-full bg-white shadow-sm"></div>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- RULES MODAL (Solo per la guida regole) -->
+  <div id="modal-rules" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3 sticky top-0 bg-slate-900 z-10">
+        <h2 class="text-xl font-extrabold text-amber-400 flex items-center space-x-2">
+          <span>📜</span>
+          <span>Regole del Gioco - Flip 7</span>
+        </h2>
+        <button id="btn-close-rules" class="text-slate-400 hover:text-white text-xl font-bold px-2 py-1">✕</button>
+      </div>
+
+      <div class="text-xs text-slate-300 space-y-3 leading-relaxed">
+        <section>
+          <h3 class="font-bold text-white text-sm mb-1 text-amber-300">🎯 Obiettivo del Gioco</h3>
+          <p>Flip 7 è un gioco di carte "push your luck". Accumula carte Numero con valori elevati senza pescare due volte lo stesso valore numerico nella stessa mano. Raggiungi o supera <strong>200 punti</strong> per vincere!</p>
+        </section>
+
+        <section>
+          <h3 class="font-bold text-white text-sm mb-1 text-red-400">💥 Rischio BUST & Carte Numero</h3>
+          <p>Il mazzo contiene carte da 0 a 12 (il numero di copie è pari al valore, tranne 0 che ha 1 copia). Se peschi un numero che hai già davanti a te, vai in <strong>BUST</strong> e perdi tutti i punti della mano! Puoi fermarti in qualsiasi momento (<strong>STAY</strong>).</p>
+        </section>
+
+        <section>
+          <h3 class="font-bold text-white text-sm mb-1 text-amber-400">🎉 Bonus FLIP 7</h3>
+          <p>Se accumuli <strong>7 carte Numero con valori differenti</strong> (compreso lo 0), realizzi un <strong>FLIP 7</strong>! La mano termina immediatamente per tutti e ottieni un <strong>bonus di +15 punti</strong>.</p>
+        </section>
+
+        <section>
+          <h3 class="font-bold text-white text-sm mb-1 text-orange-400">➕ Carte Modificatore</h3>
+          <ul class="list-disc pl-4 space-y-1">
+            <li><strong>+2:</strong> aggiunge sempre 2 punti alla mano.</li>
+            <li><strong>x2:</strong> raddoppia la somma delle carte Numero (non raddoppia il +2 o il bonus Flip 7).</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3 class="font-bold text-white text-sm mb-1 text-purple-400">⚡ Carte Azione</h3>
+          <ul class="list-disc pl-4 space-y-1">
+            <li><strong>FREEZE:</strong> costringe un giocatore attivo a fare STAY.</li>
+            <li><strong>FLIP THREE:</strong> obbliga un giocatore a effettuare 3 pescate consecutive.</li>
+            <li><strong>SECOND CHANCE:</strong> ti protegge da 1 BUST numerico scartandosi al suo posto.</li>
+          </ul>
+        </section>
+      </div>
+
+      <button id="btn-confirm-rules" class="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold rounded-xl shadow-lg transition-all mt-4">
+        Ho Capito!
+      </button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

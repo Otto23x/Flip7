@@ -1,0 +1,21 @@
+{
+  "name": "Flip 7 AI",
+  "short_name": "Flip 7 AI",
+  "description": "Gioca a Flip 7 contro un'IA in puro HTML, CSS e JavaScript!",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
