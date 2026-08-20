@@ -5,26 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Flip 7</title>
 <meta name="description" content="Gioca a Flip 7 contro l'IA — un gioco di carte push-your-luck.">
-<meta name="theme-color" content="#12100f">
+<meta name="theme-color" content="#0a1512">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icons/icon-192.svg">
 <link rel="icon" href="assets/icons/icon-192.svg">
 <style>
 :root {
-  --bg: #12100f;
-  --panel: #1e1b18;
-  --panel-border: #473e37;
-  --cell-bg: #2d2722;
-  --cell-border: #423a33;
-  --gold: #f59e0b;
-  --gold-light: #fbbf24;
-  --text: #f5f0eb;
-  --muted: #a89f91;
-  --blue: #0284c7;
-  --green: #16a34a;
-  --red: #dc2626;
-  --purple: #9333ea;
-  --cyan: #0891b2;
+  --bg: #0a1512;
+  --panel: #142420;
+  --panel-border: #2b433a;
+  --cell-bg: #1a2e28;
+  --cell-border: #2b433a;
+  --primary: #16d9a3;
+  --primary-light: #5eead4;
+  --text: #eaf5f1;
+  --muted: #86a89c;
+  --blue: #38bdf8;
+  --green: #4ade80;
+  --red: #f87171;
+  --purple: #c084fc;
+  --cyan: #22d3ee;
 }
 
 * {
@@ -75,14 +75,17 @@ body {
 #android-install-banner {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 999;
-  background: linear-gradient(135deg, #2b2420, #1a1614);
-  border: 1px solid var(--gold);
+  background: linear-gradient(135deg, #123023, #0d1f18);
+  border: 1px solid var(--primary);
   border-radius: 30px;
   padding: 8px 18px;
   display: none;
   align-items: center;
   gap: 12px;
+  max-width: calc(100vw - 24px);
   box-shadow: 0 8px 25px rgba(0,0,0,0.8);
   animation: floatBanner 3s ease-in-out infinite;
 }
@@ -91,9 +94,10 @@ body {
 #ios-install-banner {
   position: fixed;
   bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
   z-index: 999;
-  background: linear-gradient(135deg, #2b2420, #1a1614);
-  border: 1.5px solid var(--gold);
+  background: linear-gradient(135deg, #123023, #0d1f18);
+  border: 1.5px solid var(--primary);
   border-radius: 16px;
   padding: 12px 18px;
   max-width: 380px;
@@ -103,14 +107,15 @@ body {
   gap: 8px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.85);
   animation: slideUpBanner 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation-fill-mode: forwards;
 }
 @keyframes slideUpBanner {
-  from { transform: translateY(100px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateX(-50%) translateY(100px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
 @keyframes floatBanner {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
 }
 
 /* Pull-to-refresh indicator */
@@ -122,7 +127,7 @@ body {
   width: 42px;
   height: 42px;
   border-radius: 50%;
-  background: #1e1b18;
+  background: #142420;
   border: 1.5px solid var(--panel-border);
   display: flex;
   align-items: center;
@@ -134,13 +139,13 @@ body {
   pointer-events: none;
 }
 #pull-refresh-indicator.pulling { transition: none; }
-#pull-refresh-indicator.ready { border-color: var(--gold); }
+#pull-refresh-indicator.ready { border-color: var(--primary); }
 #pull-refresh-indicator svg {
   width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round; transition: stroke 0.2s ease;
 }
-#pull-refresh-indicator.ready svg { stroke: var(--gold); }
-#pull-refresh-indicator.refreshing svg { stroke: var(--gold); animation: pullSpin 0.7s linear infinite; }
+#pull-refresh-indicator.ready svg { stroke: var(--primary); }
+#pull-refresh-indicator.refreshing svg { stroke: var(--primary); animation: pullSpin 0.7s linear infinite; }
 @keyframes pullSpin { to { transform: rotate(360deg); } }
 
 /* Home Screen */
@@ -172,15 +177,15 @@ body {
   width: 100%;
 }
 .btn-main {
-  background: linear-gradient(135deg, var(--gold-light), var(--gold));
-  color: #1a1410;
+  background: linear-gradient(135deg, var(--primary-light), var(--primary));
+  color: #04231b;
   border: none;
   border-radius: 14px;
   padding: 15px;
   font-weight: 800;
   font-size: 15px;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(245,158,11,0.35);
+  box-shadow: 0 6px 20px rgba(22,217,163,0.35);
   transition: transform 0.15s ease;
 }
 .btn-main:active { transform: scale(0.97); }
@@ -195,7 +200,7 @@ body {
   cursor: pointer;
   transition: all 0.15s ease;
 }
-.btn-sub:active { transform: scale(0.97); background: #29231f; }
+.btn-sub:active { transform: scale(0.97); background: #1a2e28; }
 
 /* Setup Screen */
 .ritual-card {
@@ -210,7 +215,7 @@ body {
 .ritual-title {
   font-size: 17px;
   font-weight: 800;
-  color: var(--gold);
+  color: var(--primary);
   text-align: center;
   margin-bottom: 18px;
 }
@@ -234,7 +239,7 @@ body {
   font-size: 14px;
   font-family: inherit;
 }
-.setup-group input:focus, .setup-group select:focus { outline: 1.5px solid var(--gold); }
+.setup-group input:focus, .setup-group select:focus { outline: 1.5px solid var(--primary); }
 .setup-row {
   display: flex;
   gap: 10px;
@@ -251,7 +256,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #1e1b18;
+  background: #142420;
   border: 1px solid var(--panel-border);
   border-radius: 999px;
   padding: 9px 16px;
@@ -273,9 +278,9 @@ body {
   font-size: 11.5px; color: var(--muted); font-weight: 600;
   white-space: nowrap; flex-shrink: 0;
 }
-.status-right strong { color: var(--gold-light); }
+.status-right strong { color: var(--primary-light); }
 .thinking-dots { display: flex; gap: 3px; flex-shrink: 0; }
-.thinking-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); animation: bounceDot 1.2s infinite; }
+.thinking-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--primary); animation: bounceDot 1.2s infinite; }
 .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
 .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounceDot { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1.2); opacity: 1; } }
@@ -297,7 +302,7 @@ body {
   transition: opacity 0.3s ease, border-color 0.3s ease;
 }
 .player-zone.inactive-turn { opacity: 0.62; }
-.player-zone.active-turn { border-color: var(--gold); }
+.player-zone.active-turn { border-color: var(--primary); }
 
 .zone-header {
   display: flex;
@@ -309,18 +314,18 @@ body {
 .zone-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .zone-avatar {
   width: 30px; height: 30px; border-radius: 50%;
-  background: linear-gradient(135deg, #352d27, #221d19);
+  background: linear-gradient(135deg, #1f3a30, #142420);
   border: 1px solid var(--panel-border);
   display: flex; align-items: center; justify-content: center;
   font-size: 15px; flex-shrink: 0;
 }
 .zone-name { font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .zone-total { font-size: 10.5px; color: var(--muted); }
-.zone-total strong { color: var(--gold-light); }
+.zone-total strong { color: var(--primary-light); }
 
 .zone-stats { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .zone-round-score {
-  background: #12100f;
+  background: #0a1512;
   border: 1px solid rgba(22,163,74,0.4);
   border-radius: 10px;
   padding: 3px 9px;
@@ -330,7 +335,7 @@ body {
 .zone-round-score .val { font-size: 15px; font-weight: 900; color: #4ade80; line-height: 1.1; }
 .zone-round-score .lbl { font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
 .zone-unique { text-align: center; min-width: 30px; }
-.zone-unique .val { font-size: 15px; font-weight: 900; color: var(--gold); line-height: 1.1; }
+.zone-unique .val { font-size: 15px; font-weight: 900; color: var(--primary); line-height: 1.1; }
 .zone-unique .lbl { font-size: 7.5px; color: var(--muted); text-transform: uppercase; }
 
 .badge-status {
@@ -347,7 +352,7 @@ body {
 .status-stayed { background: rgba(2,132,199,0.18); color: #7dd3fc; border-color: rgba(2,132,199,0.4); }
 .status-busted { background: rgba(220,38,38,0.18); color: #fca5a5; border-color: rgba(220,38,38,0.4); }
 .status-freezed { background: rgba(8,145,178,0.18); color: #67e8f9; border-color: rgba(8,145,178,0.4); }
-.status-flip7 { background: var(--gold); color: #1a1410; border-color: var(--gold); }
+.status-flip7 { background: var(--primary); color: #04231b; border-color: var(--primary); }
 
 .card-strip {
   display: flex;
@@ -383,7 +388,7 @@ body {
 }
 @keyframes cardPop { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .card-chip.chip-number { background: linear-gradient(160deg, #1d4ed8, #1e1b4b); border-color: #60a5fa; color: #fff; font-size: 19px; }
-.card-chip.chip-modifier { background: linear-gradient(160deg, var(--gold), #9a3412); border-color: var(--gold-light); color: #fff; font-size: 13px; }
+.card-chip.chip-modifier { background: linear-gradient(160deg, #f97316, #7c2d12); border-color: #fdba74; color: #fff; font-size: 13px; }
 .card-chip.chip-action { background: linear-gradient(160deg, var(--purple), #581c87); border-color: #c084fc; color: #fff; font-size: 16px; }
 
 .bottom-bar {
@@ -391,13 +396,13 @@ body {
   max-width: 480px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .icon-btn {
-  width: 46px;
-  height: 46px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: #1a1614;
+  background: #0d1f18;
   border: 1.5px solid var(--panel-border);
   color: var(--muted);
   display: flex;
@@ -407,8 +412,9 @@ body {
   cursor: pointer;
   transition: all 0.15s ease;
 }
-.icon-btn:active { transform: scale(0.88); color: var(--gold); border-color: var(--gold); }
-.icon-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn:active { transform: scale(0.88); color: var(--primary); border-color: var(--primary); }
+.icon-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn:disabled { opacity: 0.3; pointer-events: none; }
 
 .action-buttons { display: flex; gap: 8px; flex: 1; }
 .btn-hit, .btn-stay {
@@ -435,7 +441,7 @@ body {
   color: var(--muted);
   min-height: 15px;
 }
-.turn-prompt strong { color: var(--gold-light); }
+.turn-prompt strong { color: var(--primary-light); }
 
 /* Dialogs */
 dialog {
@@ -446,11 +452,16 @@ dialog {
   padding: 20px;
   max-width: 420px;
   width: calc(100vw - 40px);
+  max-height: calc(100dvh - 60px);
+  overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+  position: fixed;
+  inset: 0;
+  margin: auto;
 }
 dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.modal-title { font-size: 16px; font-weight: 800; color: var(--gold); }
+.modal-title { font-size: 16px; font-weight: 800; color: var(--primary); }
 .rules-section { margin-bottom: 12px; }
 .rules-section h4 { font-size: 12.5px; font-weight: 800; margin-bottom: 4px; }
 .rules-section p, .rules-section li { font-size: 12px; color: #cfc7be; line-height: 1.5; }
@@ -459,11 +470,11 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
 /* Toast */
 #toast {
   position: fixed;
-  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  top: calc(64px + env(safe-area-inset-top, 0px));
   left: 50%;
-  transform: translateX(-50%) translateY(20px);
-  background: #221d19;
-  border: 1px solid var(--gold);
+  transform: translateX(-50%) translateY(-14px);
+  background: #142420;
+  border: 1px solid var(--primary);
   color: var(--text);
   padding: 10px 20px;
   border-radius: 999px;
@@ -472,7 +483,7 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
   opacity: 0;
   pointer-events: none;
   transition: all 0.3s ease;
-  z-index: 2000;
+  z-index: 900;
   box-shadow: 0 8px 24px rgba(0,0,0,0.6);
   max-width: 90vw;
   text-align: center;
@@ -484,7 +495,7 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #12100f;
+  background: #0a1512;
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 8px;
@@ -495,12 +506,12 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
 .summary-row .total { color: var(--muted); font-size: 11px; }
 
 .stat-block {
-  background: #29231f;
+  background: #1a2e28;
   padding: 8px 10px;
   border-radius: 8px;
   margin-bottom: 8px;
 }
-.stat-block .stat-title { font-weight: 700; color: var(--gold-light); margin-bottom: 2px; font-size: 12.5px; }
+.stat-block .stat-title { font-weight: 700; color: var(--primary-light); margin-bottom: 2px; font-size: 12.5px; }
 .stat-block .stat-row { display: flex; justify-content: space-between; font-size: 11.5px; }
 </style>
 </head>
@@ -516,7 +527,7 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
 <!-- iOS Guided Install Banner -->
 <div id="ios-install-banner">
   <div style="display:flex; justify-content:space-between; align-items:center;">
-    <span style="font-size: 13px; font-weight: 800; color:var(--gold);">📲 Installa su iPhone / iPad</span>
+    <span style="font-size: 13px; font-weight: 800; color:var(--primary);">📲 Installa su iPhone / iPad</span>
     <button style="background:none; border:none; color:var(--muted); font-size: 14px; cursor:pointer;" onclick="dismissIosBanner()">✕</button>
   </div>
   <p style="font-size: 12px; color: #cfc7be; line-height: 1.4;">
@@ -629,13 +640,16 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
     <button class="icon-btn" title="Home" onclick="confirmExitToHome()">
       <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
     </button>
+    <button id="btn-undo" class="icon-btn" title="Annulla ultima mossa" onclick="onUndoClick()">
+      <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+    </button>
+    <div class="action-buttons">
+      <button id="btn-hit" class="btn-hit" onclick="onHitClick()">HIT</button>
+      <button id="btn-stay" class="btn-stay" onclick="onStayClick()">STAY</button>
+    </div>
     <button class="icon-btn" title="Regole" onclick="document.getElementById('rules-modal').showModal()">
       <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
     </button>
-    <div class="action-buttons">
-      <button id="btn-hit" class="btn-hit" onclick="onHitClick()">👉 HIT</button>
-      <button id="btn-stay" class="btn-stay" onclick="onStayClick()">🛡️ STAY</button>
-    </div>
     <button class="icon-btn" title="Ricomincia" onclick="restartMatch()">
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
     </button>
@@ -651,15 +665,15 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
     <button class="btn-sub" style="padding:4px 8px;" onclick="document.getElementById('rules-modal').close()">✕</button>
   </div>
   <div class="rules-section">
-    <h4 style="color:var(--gold-light);">🎯 Obiettivo</h4>
+    <h4 style="color:var(--primary-light);">🎯 Obiettivo</h4>
     <p>Pesca carte Numero per accumulare punti. Se peschi due volte lo stesso numero: <strong>BUST</strong>, perdi tutti i punti della mano. Puoi fermarti quando vuoi con <strong>STAY</strong>. Primo a <strong>200 punti</strong> vince.</p>
   </div>
   <div class="rules-section">
-    <h4 style="color:#fbbf24;">🎉 Bonus Flip 7</h4>
+    <h4 style="color:var(--primary-light);">🎉 Bonus Flip 7</h4>
     <p>7 numeri diversi davanti a te: la mano finisce subito per tutti e ottieni <strong>+15 punti</strong>.</p>
   </div>
   <div class="rules-section">
-    <h4 style="color:var(--gold);">➕ Modificatori</h4>
+    <h4 style="color:var(--primary);">➕ Modificatori</h4>
     <p><strong>+2/+4/+6/+8/+10:</strong> aggiunti sempre al punteggio. <strong>x2:</strong> raddoppia solo la somma dei numeri.</p>
   </div>
   <div class="rules-section">
@@ -744,17 +758,37 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
   <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Tornando alla Home la partita in corso verrà interrotta e persa.</p>
   <div style="display:flex; gap:8px;">
     <button class="btn-sub" style="flex:1;" onclick="document.getElementById('exit-confirm-dialog').close()">Annulla</button>
-    <button class="btn-main" style="flex:1; background:#dc2626; color:#fff;" onclick="document.getElementById('exit-confirm-dialog').close(); navigateScreen('screen-home');">Esci</button>
+    <button class="btn-main" style="flex:1; background:#dc2626; color:#fff;" onclick="document.getElementById('exit-confirm-dialog').close(); stopAmbientMusic(); navigateScreen('screen-home');">Esci</button>
   </div>
 </dialog>
 
 <!-- Restart Confirmation Dialog -->
 <dialog id="restart-confirm-dialog">
-  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--gold);">Ricominciare la partita?</h3>
+  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--primary);">Ricominciare la partita?</h3>
   <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Punteggi azzerati, si riparte dalla Mano 1.</p>
   <div style="display:flex; gap:8px;">
     <button class="btn-sub" style="flex:1;" onclick="document.getElementById('restart-confirm-dialog').close()">Annulla</button>
     <button class="btn-main" style="flex:1;" onclick="confirmRestartMatch()">Ricomincia</button>
+  </div>
+</dialog>
+
+<!-- Exit App Confirmation Dialog -->
+<dialog id="exit-app-confirm-dialog">
+  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--red);">Chiudere il gioco?</h3>
+  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">L'app verrà chiusa.</p>
+  <div style="display:flex; gap:8px;">
+    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('exit-app-confirm-dialog').close()">Annulla</button>
+    <button class="btn-main" style="flex:1; background:var(--red); color:#2b0a0a;" onclick="document.getElementById('exit-app-confirm-dialog').close(); window.close();">Chiudi</button>
+  </div>
+</dialog>
+
+<!-- Reset Stats Confirmation Dialog -->
+<dialog id="reset-stats-confirm-dialog">
+  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--red);">Azzerare le statistiche?</h3>
+  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Tutti i dati di partite vinte/perse verranno cancellati per sempre.</p>
+  <div style="display:flex; gap:8px;">
+    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('reset-stats-confirm-dialog').close()">Annulla</button>
+    <button class="btn-main" style="flex:1; background:var(--red); color:#2b0a0a;" onclick="confirmResetStats()">Azzera</button>
   </div>
 </dialog>
 

@@ -1,21 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 130" width="520" height="130">
   <defs>
-    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#fef08a"/>
-      <stop offset="50%" stop-color="#f59e0b"/>
-      <stop offset="100%" stop-color="#b45309"/>
+    <linearGradient id="tealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5eead4"/>
+      <stop offset="50%" stop-color="#16d9a3"/>
+      <stop offset="100%" stop-color="#0d9488"/>
     </linearGradient>
     <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#f59e0b" flood-opacity="0.4"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#16d9a3" flood-opacity="0.45"/>
     </filter>
   </defs>
-  <g transform="translate(18, 14)">
-    <rect x="4" y="4" width="58" height="80" rx="11" fill="none" stroke="url(#goldGrad)" stroke-width="5" filter="url(#glow)"/>
-    <text x="33" y="66" font-family="'Georgia', 'Times New Roman', serif" font-size="50" font-weight="900" fill="url(#goldGrad)" text-anchor="middle" filter="url(#glow)">7</text>
-    <path d="M 56,10 A 33,33 0 0 1 76,40" stroke="url(#goldGrad)" stroke-width="4.5" fill="none" stroke-linecap="round" filter="url(#glow)"/>
-    <path d="M 66,32 L 76,40 L 83,29" stroke="url(#goldGrad)" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
-    <circle cx="33" cy="-4" r="5" fill="#f59e0b"/>
+  <g transform="translate(14, 15)">
+    <rect x="18" y="10" width="56" height="78" rx="10" fill="#0a1512" stroke="#2b433a" stroke-width="3"/>
+    <rect x="4" y="0" width="56" height="78" rx="10" fill="none" stroke="url(#tealGrad)" stroke-width="5" filter="url(#glow)"/>
+    <text x="33" y="62" font-family="Georgia, 'Times New Roman', serif" font-size="48" font-weight="900" fill="url(#tealGrad)" text-anchor="middle" filter="url(#glow)">7</text>
+    <path d="M 58,4 A 34,34 0 0 1 79,35" stroke="url(#tealGrad)" stroke-width="4.5" fill="none" stroke-linecap="round" filter="url(#glow)"/>
+    <path d="M 68,27 L 79,35 L 87,24" stroke="url(#tealGrad)" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
   </g>
-  <text x="140" y="76" font-family="Georgia, 'Times New Roman', serif" font-size="46" font-weight="900" fill="url(#goldGrad)" letter-spacing="4" filter="url(#glow)">FLIP 7</text>
-  <text x="144" y="100" font-family="sans-serif" font-size="12" font-weight="600" fill="#a89f91" letter-spacing="3">🎴 · PUSH YOUR LUCK</text>
+  <text x="148" y="76" font-family="'Arial Black', Arial, sans-serif" font-size="44" font-weight="900" fill="url(#tealGrad)" letter-spacing="1" filter="url(#glow)">FLIP 7</text>
+  <text x="150" y="99" font-family="sans-serif" font-size="12" font-weight="600" fill="#86a89c" letter-spacing="3">PUSH YOUR LUCK</text>
 </svg>

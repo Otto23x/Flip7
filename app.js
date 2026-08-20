@@ -20,7 +20,9 @@ let state = {
   mode: 'normal', // easy | normal | hard | gemini
   p1Name: 'Giocatore',
   discoveredFlashModels: [],
-  settings: { soundEnabled: true }
+  settings: { soundEnabled: true },
+  undoStack: [],
+  isAiBusy: false
 };
 
 let deferredAndroidPrompt = null;
@@ -108,9 +110,13 @@ function rebuildDeckIfNeeded() {
 }
 
 /* =========================================================
-   3. AUDIO (bust sound only, respects the sound setting)
+   3. AUDIO (ambient music + short effects on separate gain nodes, so a HIT/STAY
+      blip never cuts off the music, and toggling sound fades things out cleanly
+      instead of hard-stopping mid-note)
    ========================================================= */
 let audioCtx = null;
+let musicNodes = null;
+
 function initAudio() {
   if (!audioCtx) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -118,6 +124,64 @@ function initAudio() {
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 }
+
+function startAmbientMusic() {
+  if (!state.settings.soundEnabled) return;
+  initAudio();
+  if (!audioCtx || musicNodes) return;
+
+  try {
+    const master = audioCtx.createGain();
+    master.gain.setValueAtTime(0, audioCtx.currentTime);
+    master.gain.linearRampToValueAtTime(0.055, audioCtx.currentTime + 2);
+    master.connect(audioCtx.destination);
+
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 800;
+    filter.Q.value = 0.6;
+    filter.connect(master);
+
+    const oscillators = [110, 164.81, 220].map((f, i) => {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      const oGain = audioCtx.createGain();
+      oGain.gain.value = i === 0 ? 0.9 : 0.45;
+      osc.connect(oGain);
+      oGain.connect(filter);
+      osc.start();
+      return osc;
+    });
+
+    const lfo = audioCtx.createOscillator();
+    lfo.frequency.value = 0.06;
+    const lfoGain = audioCtx.createGain();
+    lfoGain.gain.value = 260;
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+    lfo.start();
+
+    musicNodes = { oscillators, master, lfo };
+  } catch (e) { /* audio best-effort */ }
+}
+
+function stopAmbientMusic() {
+  if (!musicNodes || !audioCtx) return;
+  const { oscillators, master, lfo } = musicNodes;
+  try {
+    const now = audioCtx.currentTime;
+    master.gain.cancelScheduledValues(now);
+    master.gain.setValueAtTime(master.gain.value, now);
+    master.gain.linearRampToValueAtTime(0, now + 0.6);
+    setTimeout(() => {
+      oscillators.forEach(o => { try { o.stop(); } catch (e) {} });
+      try { lfo.stop(); } catch (e) {}
+    }, 700);
+  } catch (e) { /* best-effort */ }
+  musicNodes = null;
+}
+
 function playBustSound() {
   if (!state.settings.soundEnabled) return;
   initAudio();
@@ -138,6 +202,69 @@ function playBustSound() {
   } catch (e) { /* audio best-effort */ }
 }
 
+function playDrawSound() {
+  if (!state.settings.soundEnabled) return;
+  initAudio();
+  if (!audioCtx) return;
+  try {
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(520, now);
+    osc.frequency.exponentialRampToValueAtTime(720, now + 0.08);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.13);
+  } catch (e) { /* best-effort */ }
+}
+
+function playStaySound() {
+  if (!state.settings.soundEnabled) return;
+  initAudio();
+  if (!audioCtx) return;
+  try {
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(392, now);
+    osc.frequency.setValueAtTime(523.25, now + 0.09);
+    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.36);
+  } catch (e) { /* best-effort */ }
+}
+
+function playWinSound() {
+  if (!state.settings.soundEnabled) return;
+  initAudio();
+  if (!audioCtx) return;
+  try {
+    const now = audioCtx.currentTime;
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = f;
+      const t = now + i * 0.09;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.16, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.42);
+    });
+  } catch (e) { /* best-effort */ }
+}
+
 /* =========================================================
    4. GAME FLOW
    ========================================================= */
@@ -151,8 +278,8 @@ function startNewGame() {
   state.discardPile = [];
   state.usedCards = [];
   state.players = [
-    { id: 'player-human', name: state.p1Name, isHuman: true, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined },
-    { id: 'player-ai', name: 'IA', isHuman: false, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined }
+    { id: 'player-human', name: state.p1Name, isHuman: true, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [] },
+    { id: 'player-ai', name: 'CPU', isHuman: false, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [] }
   ];
   state.currentPlayerIndex = 0;
   state.dealerIndex = 0;
@@ -161,8 +288,11 @@ function startNewGame() {
   state.pendingEffects = [];
   state.currentPendingEffect = null;
   state.winnerId = null;
+  state.undoStack = [];
+  state.isAiBusy = false;
 
   navigateScreen('screen-game');
+  startAmbientMusic();
   startRound();
 }
 
@@ -173,12 +303,14 @@ function startRound() {
     p.numberCards = [];
     p.modifierCards = [];
     p.secondChanceCard = undefined;
+    p.usedActionCards = [];
   });
 
   state.discardPile = [...state.discardPile, ...state.usedCards];
   state.usedCards = [];
   state.pendingEffects = [];
   state.currentPendingEffect = null;
+  state.undoStack = [];
 
   rebuildDeckIfNeeded();
 
@@ -204,10 +336,12 @@ function dealInitialCard(playerIndex) {
 }
 
 function drawCard(playerIndex) {
-  rebuildDeckIfNeeded();
-  if (state.drawPile.length === 0) return;
   const player = state.players[playerIndex];
   if (player.status !== 'ACTIVE') return;
+  snapshotForUndo();
+  rebuildDeckIfNeeded();
+  if (state.drawPile.length === 0) { state.undoStack.pop(); return; }
+  playDrawSound();
   const card = state.drawPile.shift();
   state.usedCards.push(card);
   applyCardToPlayer(playerIndex, card, false);
@@ -215,9 +349,29 @@ function drawCard(playerIndex) {
 
 // inForcedSequence=true (used during initial deal & FLIP_THREE forced draws) skips the
 // automatic turn-advance for "safe" outcomes, since the caller is driving the sequence itself.
+function opponentLabel() {
+  return state.mode === 'gemini' ? 'IA' : 'CPU';
+}
+
+function snapshotForUndo() {
+  state.undoStack.push({
+    players: JSON.parse(JSON.stringify(state.players)),
+    drawPile: state.drawPile.slice(),
+    discardPile: state.discardPile.slice(),
+    usedCards: state.usedCards.slice(),
+    currentPlayerIndex: state.currentPlayerIndex,
+    dealerIndex: state.dealerIndex,
+    roundNumber: state.roundNumber,
+    phase: state.phase,
+    pendingEffects: JSON.parse(JSON.stringify(state.pendingEffects)),
+    currentPendingEffect: state.currentPendingEffect ? JSON.parse(JSON.stringify(state.currentPendingEffect)) : null
+  });
+  if (state.undoStack.length > 40) state.undoStack.shift();
+}
+
 function applyCardToPlayer(playerIndex, card, inForcedSequence) {
   const player = state.players[playerIndex];
-  const whoName = player.isHuman ? state.p1Name : 'IA';
+  const whoName = player.isHuman ? state.p1Name : opponentLabel();
 
   if (card.type === 'NUMBER') {
     const hasDuplicate = player.numberCards.some(c => c.value === card.value);
@@ -242,6 +396,7 @@ function applyCardToPlayer(playerIndex, card, inForcedSequence) {
     const res = calculateRoundScore(player);
     if (res.isFlip7) {
       showToast(`🎉 FLIP 7! ${whoName} +15 punti bonus!`);
+      playWinSound();
       player.status = 'FLIP_7';
       player.roundScore = res.score;
       endRoundImmediatelyOnFlip7(playerIndex);
@@ -267,7 +422,7 @@ function applyCardToPlayer(playerIndex, card, inForcedSequence) {
         const recipient = state.players.find((p, idx) => idx !== playerIndex && !p.secondChanceCard && p.status === 'ACTIVE');
         if (recipient) {
           recipient.secondChanceCard = card;
-          showToast(`🛡️ Second Chance passata a ${recipient.isHuman ? state.p1Name : 'IA'}`);
+          showToast(`🛡️ Second Chance passata a ${recipient.isHuman ? state.p1Name : opponentLabel()}`);
         } else {
           state.discardPile.push(card);
         }
@@ -277,6 +432,9 @@ function applyCardToPlayer(playerIndex, card, inForcedSequence) {
     }
 
     if (card.effect === 'FREEZE' || card.effect === 'FLIP_THREE') {
+      // Shown on the table like any other card, but never counted in the score.
+      player.usedActionCards.push(card);
+
       const activeTargets = state.players.filter(p => p.status === 'ACTIVE');
       const effect = { id: `effect-${Date.now()}-${Math.random()}`, type: card.effect, sourcePlayerId: player.id };
 
@@ -297,57 +455,86 @@ function applyCardToPlayer(playerIndex, card, inForcedSequence) {
   }
 }
 
+// Per the rules, Freeze/Flip Three can target yourself or the opponent. Giving it to the
+// opponent does NOT end your own turn — you drew the card, used it, and keep playing.
+// Only freezing yourself ends your turn (a self-Freeze is a forced Stay).
 function resolveEffectOnTarget(effect, targetPlayerId) {
   const targetPlayer = state.players.find(p => p.id === targetPlayerId);
-  if (!targetPlayer) { checkTurnOrRoundEnd(); return; }
-  const whoName = targetPlayer.isHuman ? state.p1Name : 'IA';
+  const sourcePlayer = state.players.find(p => p.id === effect.sourcePlayerId);
+  if (!targetPlayer || !sourcePlayer) { checkTurnOrRoundEnd(); return; }
+  const whoName = targetPlayer.isHuman ? state.p1Name : opponentLabel();
+  const targetingSelf = targetPlayer.id === sourcePlayer.id;
 
   if (effect.type === 'FREEZE') {
     showToast(`❄️ FREEZE su ${whoName}: costretto a fermarsi.`);
     targetPlayer.status = 'FREEZED';
     targetPlayer.roundScore = calculateRoundScore(targetPlayer).score;
-    checkTurnOrRoundEnd();
+    if (targetingSelf) checkTurnOrRoundEnd();
+    else returnTurnToSource(sourcePlayer);
     return;
   }
 
   if (effect.type === 'FLIP_THREE') {
     showToast(`🎲 FLIP THREE su ${whoName}: pesca 3 carte di fila!`);
-    processFlipThreeDraw(state.players.findIndex(p => p.id === targetPlayerId), 3);
+    processFlipThreeDraw(state.players.findIndex(p => p.id === targetPlayerId), 3, sourcePlayer.id);
     return;
   }
 }
 
+function returnTurnToSource(sourcePlayer) {
+  if (sourcePlayer.status !== 'ACTIVE') { checkTurnOrRoundEnd(); return; }
+  state.currentPlayerIndex = state.players.findIndex(p => p.id === sourcePlayer.id);
+  state.phase = sourcePlayer.isHuman ? 'PLAYER_TURN' : 'AI_TURN';
+  renderGame();
+  triggerAITurnIfNeeded();
+}
+
 function resolveTargetSelection(targetPlayerId) {
   if (!state.currentPendingEffect) return;
+  snapshotForUndo();
   const effect = state.currentPendingEffect;
   state.pendingEffects = state.pendingEffects.filter(e => e.id !== effect.id);
   state.currentPendingEffect = null;
   resolveEffectOnTarget(effect, targetPlayerId);
 }
 
-function processFlipThreeDraw(targetIdx, remainingDraws) {
+// remainingDraws counts down the forced draws; returnToPlayerId is always the original
+// drawer of the Flip Three card — once the forced draws finish, control returns to them
+// (whether they targeted themselves or the opponent), not to the next player in rotation.
+function processFlipThreeDraw(targetIdx, remainingDraws, returnToPlayerId) {
   const targetPlayer = state.players[targetIdx];
-  if (remainingDraws <= 0 || targetPlayer.status !== 'ACTIVE') { checkTurnOrRoundEnd(); return; }
+  if (remainingDraws <= 0 || targetPlayer.status !== 'ACTIVE') { finishFlipThree(returnToPlayerId); return; }
 
   rebuildDeckIfNeeded();
-  if (state.drawPile.length === 0) { checkTurnOrRoundEnd(); return; }
+  if (state.drawPile.length === 0) { finishFlipThree(returnToPlayerId); return; }
 
   const card = state.drawPile.shift();
   state.usedCards.push(card);
   applyCardToPlayer(targetIdx, card, true);
 
-  if (targetPlayer.status === 'BUSTED' || targetPlayer.status === 'FLIP_7') return;
+  if (targetPlayer.status === 'BUSTED' || targetPlayer.status === 'FLIP_7') return; // already fully resolved (round-end path)
 
   if (remainingDraws - 1 > 0) {
-    setTimeout(() => processFlipThreeDraw(targetIdx, remainingDraws - 1), 550);
-  } else {
-    checkTurnOrRoundEnd();
+    setTimeout(() => {
+      if (state.phase === 'CHOOSING_TARGET') return; // a nested action card is being resolved first
+      processFlipThreeDraw(targetIdx, remainingDraws - 1, returnToPlayerId);
+    }, 550);
+  } else if (state.phase !== 'CHOOSING_TARGET') {
+    finishFlipThree(returnToPlayerId);
   }
+}
+
+function finishFlipThree(returnToPlayerId) {
+  const sourcePlayer = returnToPlayerId ? state.players.find(p => p.id === returnToPlayerId) : null;
+  if (sourcePlayer && sourcePlayer.status === 'ACTIVE') returnTurnToSource(sourcePlayer);
+  else checkTurnOrRoundEnd();
 }
 
 function playerStay(playerIndex) {
   const player = state.players[playerIndex];
   if (player.status !== 'ACTIVE') return;
+  snapshotForUndo();
+  playStaySound();
   player.status = 'STAYED';
   player.roundScore = calculateRoundScore(player).score;
   checkTurnOrRoundEnd();
@@ -627,11 +814,13 @@ function triggerAITurnIfNeeded() {
   const aiIdx = state.players.findIndex(p => !p.isHuman && p.status === 'ACTIVE');
   if (aiIdx === -1) return;
 
+  state.isAiBusy = true;
   setAiThinking(true);
 
   if (state.mode === 'gemini') {
     chooseGeminiAction(aiIdx).then(action => {
       setTimeout(() => {
+        state.isAiBusy = false;
         setAiThinking(false);
         if (action === 'HIT') drawCard(aiIdx); else playerStay(aiIdx);
       }, 350);
@@ -639,6 +828,7 @@ function triggerAITurnIfNeeded() {
   } else {
     const delay = Math.floor(Math.random() * 650) + 650;
     setTimeout(() => {
+      state.isAiBusy = false;
       setAiThinking(false);
       const action = chooseAIActionHeuristic(aiIdx, state.mode);
       if (action === 'HIT') drawCard(aiIdx); else playerStay(aiIdx);
@@ -653,14 +843,16 @@ function triggerAITargetSelectionIfNeeded() {
   if (!sourcePlayer || sourcePlayer.isHuman) return;
 
   const aiIdx = state.players.findIndex(p => p.id === sourcePlayer.id);
+  state.isAiBusy = true;
   setAiThinking(true);
 
   if (state.mode === 'gemini') {
     chooseGeminiTarget(aiIdx, effect.type).then(targetId => {
-      setTimeout(() => { setAiThinking(false); resolveTargetSelection(targetId); }, 400);
+      setTimeout(() => { state.isAiBusy = false; setAiThinking(false); resolveTargetSelection(targetId); }, 400);
     });
   } else {
     setTimeout(() => {
+      state.isAiBusy = false;
       setAiThinking(false);
       resolveTargetSelection(chooseAITarget(aiIdx, effect.type));
     }, 850);
@@ -705,6 +897,9 @@ function renderPlayerZone(player, prefix, isActiveTurn, inRound) {
   player.numberCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
   player.modifierCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
   if (player.secondChanceCard) cardsBox.appendChild(createCardChip(player.secondChanceCard));
+  // Spent action cards (Freeze/Flip Three) stay visible on the table too, purely for
+  // reference — they were already excluded from calculateRoundScore from the start.
+  player.usedActionCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
 
   const zone = document.getElementById(`${prefix}-zone`);
   zone.classList.toggle('active-turn', inRound && isActiveTurn);
@@ -720,9 +915,11 @@ function renderGame() {
   const ai = state.players.find(p => !p.isHuman);
   if (!human || !ai) return;
 
+  const oppLabel = opponentLabel();
   document.getElementById('human-name').textContent = state.p1Name;
+  document.getElementById('ai-name').textContent = oppLabel;
   document.getElementById('status-right').innerHTML =
-    `Tu <strong>${human.score}</strong> · IA <strong>${ai.score}</strong> · 🂠<strong>${state.drawPile.length}</strong>`;
+    `Tu <strong>${human.score}</strong> · ${oppLabel} <strong>${ai.score}</strong> · 🂠<strong>${state.drawPile.length}</strong>`;
 
   const inRound = state.phase === 'PLAYER_TURN' || state.phase === 'AI_TURN' || state.phase === 'CHOOSING_TARGET';
   const currentPlayer = state.players[state.currentPlayerIndex];
@@ -733,13 +930,13 @@ function renderGame() {
   const dot = document.getElementById('status-dot');
   const text = document.getElementById('status-text');
   if (currentPlayer && inRound) {
-    dot.style.background = currentPlayer.isHuman ? 'var(--gold)' : 'var(--purple)';
-    text.textContent = currentPlayer.isHuman ? `Turno: ${state.p1Name}` : 'Turno: IA';
+    dot.style.background = currentPlayer.isHuman ? 'var(--primary)' : 'var(--purple)';
+    text.textContent = currentPlayer.isHuman ? `Turno: ${state.p1Name}` : `Turno: ${oppLabel}`;
   } else if (state.phase === 'ROUND_END') {
     dot.style.background = 'var(--blue)';
     text.textContent = `Fine Mano ${state.roundNumber}`;
   } else if (state.phase === 'GAME_END') {
-    dot.style.background = 'var(--gold)';
+    dot.style.background = 'var(--primary)';
     text.textContent = 'Partita Finita';
   }
 
@@ -747,9 +944,9 @@ function renderGame() {
   if (state.phase === 'PLAYER_TURN') {
     promptEl.innerHTML = 'Premi <strong>HIT</strong> per pescare o <strong>STAY</strong> per fermarti.';
   } else if (state.phase === 'AI_TURN') {
-    promptEl.textContent = "L'IA sta decidendo...";
+    promptEl.textContent = `${oppLabel} sta decidendo...`;
   } else if (state.phase === 'CHOOSING_TARGET') {
-    promptEl.textContent = currentPlayer.isHuman ? 'Scegli il bersaglio nella finestra.' : "L'IA sta scegliendo il bersaglio...";
+    promptEl.textContent = currentPlayer.isHuman ? 'Scegli il bersaglio nella finestra.' : `${oppLabel} sta scegliendo il bersaglio...`;
   } else {
     promptEl.innerHTML = '&nbsp;';
   }
@@ -757,6 +954,7 @@ function renderGame() {
   const canAct = state.phase === 'PLAYER_TURN' && human.status === 'ACTIVE';
   document.getElementById('btn-hit').disabled = !canAct;
   document.getElementById('btn-stay').disabled = !canAct;
+  document.getElementById('btn-undo').disabled = !canUndo();
 }
 
 function showHumanTargetModal(effect) {
@@ -772,7 +970,7 @@ function showHumanTargetModal(effect) {
   const oppBtn = document.getElementById('target-btn-opponent');
 
   selfBtn.textContent = state.p1Name;
-  oppBtn.textContent = 'IA';
+  oppBtn.textContent = opponentLabel();
   selfBtn.onclick = () => { document.getElementById('target-modal').close(); resolveTargetSelection(human.id); };
   oppBtn.onclick = () => { document.getElementById('target-modal').close(); resolveTargetSelection(ai.id); };
 
@@ -785,7 +983,7 @@ function showRoundEndModal(gains) {
   document.getElementById('round-end-title').textContent = `Fine Mano ${state.roundNumber}`;
   document.getElementById('round-end-summary').innerHTML = `
     <div class="summary-row"><span class="name">${state.p1Name}</span><span class="gain">+${gains[human.id] || 0}</span><span class="total">tot. ${human.score}</span></div>
-    <div class="summary-row"><span class="name">IA</span><span class="gain">+${gains[ai.id] || 0}</span><span class="total">tot. ${ai.score}</span></div>
+    <div class="summary-row"><span class="name">${opponentLabel()}</span><span class="gain">+${gains[ai.id] || 0}</span><span class="total">tot. ${ai.score}</span></div>
   `;
   document.getElementById('round-end-modal').showModal();
 }
@@ -793,10 +991,10 @@ function showRoundEndModal(gains) {
 function showGameEndModal(winner) {
   const human = state.players.find(p => p.isHuman);
   const ai = state.players.find(p => !p.isHuman);
-  document.getElementById('game-end-title').textContent = winner.isHuman ? '🏆 Hai Vinto!' : '🤖 Ha Vinto la IA';
+  document.getElementById('game-end-title').textContent = winner.isHuman ? '🏆 Hai Vinto!' : `🤖 Ha Vinto la ${opponentLabel()}`;
   document.getElementById('game-end-summary').innerHTML = `
     <div class="summary-row"><span class="name">${state.p1Name}</span><span class="total">${human.score} pt</span></div>
-    <div class="summary-row"><span class="name">IA</span><span class="total">${ai.score} pt</span></div>
+    <div class="summary-row"><span class="name">${opponentLabel()}</span><span class="total">${ai.score} pt</span></div>
   `;
   document.getElementById('game-end-modal').showModal();
 }
@@ -826,6 +1024,31 @@ function onStayClick() {
   if (idx !== -1 && state.phase === 'PLAYER_TURN') playerStay(idx);
 }
 
+function canUndo() {
+  return state.undoStack.length > 0 && !state.isAiBusy && state.phase !== 'CHOOSING_TARGET' &&
+         state.phase !== 'ROUND_END' && state.phase !== 'GAME_END';
+}
+
+function onUndoClick() {
+  if (!canUndo()) return;
+  const prev = state.undoStack.pop();
+  state.players = prev.players;
+  state.drawPile = prev.drawPile;
+  state.discardPile = prev.discardPile;
+  state.usedCards = prev.usedCards;
+  state.currentPlayerIndex = prev.currentPlayerIndex;
+  state.dealerIndex = prev.dealerIndex;
+  state.roundNumber = prev.roundNumber;
+  state.phase = prev.phase;
+  state.pendingEffects = prev.pendingEffects;
+  state.currentPendingEffect = prev.currentPendingEffect;
+
+  const targetModal = document.getElementById('target-modal');
+  if (targetModal.open) targetModal.close();
+
+  renderGame();
+}
+
 function onNextRoundClick() {
   document.getElementById('round-end-modal').close();
   proceedToNextRound();
@@ -850,7 +1073,7 @@ function confirmRestartMatch() {
 }
 
 function exitApp() {
-  if (confirm('Vuoi chiudere il gioco?')) window.close();
+  document.getElementById('exit-app-confirm-dialog').showModal();
 }
 
 /* =========================================================
@@ -943,6 +1166,13 @@ function saveGeminiKey(val) {
 function saveSoundSetting(val) {
   state.settings.soundEnabled = val === 'on';
   localStorage.setItem('flip7_sound', val);
+
+  const onGameScreen = document.getElementById('screen-game').classList.contains('active');
+  if (!state.settings.soundEnabled) {
+    stopAmbientMusic();
+  } else if (onGameScreen) {
+    startAmbientMusic();
+  }
 }
 
 async function testAiConnection() {
@@ -1008,7 +1238,7 @@ function openStatsModal() {
     const winRate = s.total > 0 ? Math.round((s.wins / s.total) * 100) : 0;
     return `<div class="stat-block">
       <div class="stat-title">${c.label}</div>
-      <div class="stat-row"><span>Partite: ${s.total}</span><span style="color:var(--gold);">Vinte: ${s.wins}</span><span style="color:#ef4444;">Perse: ${s.losses}</span><span>${winRate}%</span></div>
+      <div class="stat-row"><span>Partite: ${s.total}</span><span style="color:var(--primary);">Vinte: ${s.wins}</span><span style="color:#ef4444;">Perse: ${s.losses}</span><span>${winRate}%</span></div>
     </div>`;
   }).join('');
 
@@ -1020,11 +1250,14 @@ function openStatsModal() {
 }
 
 function resetStats() {
-  if (confirm('Vuoi azzerare tutte le statistiche?')) {
-    localStorage.removeItem('flip7_stats');
-    openStatsModal();
-    showToast('Statistiche azzerate.');
-  }
+  document.getElementById('reset-stats-confirm-dialog').showModal();
+}
+
+function confirmResetStats() {
+  document.getElementById('reset-stats-confirm-dialog').close();
+  localStorage.removeItem('flip7_stats');
+  openStatsModal();
+  showToast('Statistiche azzerate.');
 }
 
 /* =========================================================
