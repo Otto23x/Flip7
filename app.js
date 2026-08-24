@@ -20,7 +20,8 @@ let state = {
   discoveredFlashModels: [],
   settings: { soundEnabled: true },
   undoStack: [],
-  isAiBusy: false
+  isAiBusy: false,
+  sequenceToken: 0
 };
 
 let deferredAndroidPrompt = null;
@@ -289,6 +290,7 @@ function startNewGame() {
   state.winnerId = null;
   state.undoStack = [];
   state.isAiBusy = false;
+  bumpSequence(); // invalidate anything still scheduled from a previous game
 
   navigateScreen('screen-game');
   startAmbientMusic();
@@ -299,6 +301,9 @@ function startNewGame() {
 // The player after the dealer simply takes the first normal turn (Hit or Stay), exactly
 // like every other turn in the round.
 function startRound() {
+  bumpSequence(); // invalidate anything still scheduled from the previous hand
+  state.isAiBusy = false;
+  setAiThinking(false);
   state.players.forEach(p => {
     p.roundScore = 0;
     p.status = 'ACTIVE';
@@ -327,12 +332,38 @@ function getOpponent(player) {
   return state.players.find(p => p.id !== player.id);
 }
 
+// Every scheduled continuation (paced forced draws, AI "thinking" delays) captures the
+// sequence token that was current when it was scheduled. Undo / restart / new game bump
+// the token, so any callback still in flight from the old timeline sees a stale token and
+// aborts instead of mutating freshly restored state.
+function bumpSequence() {
+  state.sequenceToken++;
+  return state.sequenceToken;
+}
+function isStale(token) {
+  return token !== state.sequenceToken;
+}
+
 function drawCard(playerIndex) {
   const player = state.players[playerIndex];
   if (player.status !== 'ACTIVE') return;
-  snapshotForUndo();
+
   rebuildDeckIfNeeded();
-  if (state.drawPile.length === 0) { state.undoStack.pop(); return; }
+  if (state.drawPile.length === 0) {
+    // Deck genuinely exhausted (everything still on the table): nobody can draw, so the
+    // hand ends here rather than leaving the turn hanging with nothing to do.
+    showGameMessage('🂠 Mazzo esaurito: la mano finisce qui.');
+    state.players.forEach(p => {
+      if (p.status === 'ACTIVE') {
+        p.status = 'STAYED';
+        p.roundScore = calculateRoundScore(p).score;
+      }
+    });
+    endRound();
+    return;
+  }
+
+  snapshotForUndo();
   playDrawSound();
   const card = state.drawPile.shift();
   state.usedCards.push(card);
@@ -344,7 +375,12 @@ function drawCard(playerIndex) {
 
   if (extraDraws.length > 0) {
     // Drew a Flip Three — it doesn't end your own turn, you continue afterward.
-    setTimeout(() => processForcedDrawQueue(extraDraws, player.id), 550);
+    const token = state.sequenceToken;
+    renderGame();
+    setTimeout(() => {
+      if (isStale(token)) return;
+      processForcedDrawQueue(extraDraws, player.id, token);
+    }, 550);
   } else {
     checkTurnOrRoundEnd();
   }
@@ -444,24 +480,35 @@ function applyCardEffect(playerIndex, card) {
       return [];
     }
 
+    // Penalty cards always go to the opponent. If the opponent isn't active anymore
+    // there's nobody to penalise — the card is simply discarded with no effect
+    // (never turned back on the player who drew it).
     if (card.effect === 'FREEZE') {
-      player.usedActionCards.push(card);
       const opponent = getOpponent(player);
-      const target = (opponent && opponent.status === 'ACTIVE') ? opponent : player;
-      const targetName = target.isHuman ? state.p1Name : opponentLabel();
+      if (!opponent || opponent.status !== 'ACTIVE') {
+        state.discardPile.push(card);
+        showGameMessage(`❄️ ${whoName} pesca FREEZE, ma non c'è nessun avversario attivo: scartata.`);
+        return [];
+      }
+      player.usedActionCards.push(card);
+      const targetName = opponent.isHuman ? state.p1Name : opponentLabel();
       showGameMessage(`❄️ ${whoName} pesca FREEZE: ${targetName} si ferma con il punteggio attuale.`);
-      target.status = 'FREEZED';
-      target.roundScore = calculateRoundScore(target).score;
+      opponent.status = 'FREEZED';
+      opponent.roundScore = calculateRoundScore(opponent).score;
       return [];
     }
 
     if (card.effect === 'FLIP_THREE') {
-      player.usedActionCards.push(card);
       const opponent = getOpponent(player);
-      const target = (opponent && opponent.status === 'ACTIVE') ? opponent : player;
-      const targetName = target.isHuman ? state.p1Name : opponentLabel();
+      if (!opponent || opponent.status !== 'ACTIVE') {
+        state.discardPile.push(card);
+        showGameMessage(`🎲 ${whoName} pesca FLIP THREE, ma non c'è nessun avversario attivo: scartata.`);
+        return [];
+      }
+      player.usedActionCards.push(card);
+      const targetName = opponent.isHuman ? state.p1Name : opponentLabel();
       showGameMessage(`🎲 ${whoName} pesca FLIP THREE: ${targetName} pesca 3 carte di fila!`);
-      const targetIdx = state.players.findIndex(p => p.id === target.id);
+      const targetIdx = state.players.findIndex(p => p.id === opponent.id);
       return [targetIdx, targetIdx, targetIdx];
     }
   }
@@ -482,7 +529,9 @@ function returnTurnToSource(sourcePlayer) {
 // another one, however deep, without any separate pause/resume bookkeeping. Any queued
 // draw for a player who busted (or was otherwise deactivated) along the way is simply
 // skipped rather than aborting the whole queue, so unrelated remaining draws still happen.
-function processForcedDrawQueue(queue, returnToPlayerId) {
+function processForcedDrawQueue(queue, returnToPlayerId, token) {
+  if (token !== undefined && isStale(token)) return;
+
   const remaining = queue.filter(idx => state.players[idx].status === 'ACTIVE');
 
   if (remaining.length === 0) {
@@ -498,7 +547,16 @@ function processForcedDrawQueue(queue, returnToPlayerId) {
 
   rebuildDeckIfNeeded();
   if (state.drawPile.length === 0) {
-    processForcedDrawQueue(rest, returnToPlayerId);
+    // Nothing left to draw: abandon the remaining forced draws and settle the hand
+    // rather than leaving the sequence (and the turn) hanging.
+    showGameMessage('🂠 Mazzo esaurito: la mano finisce qui.');
+    state.players.forEach(p => {
+      if (p.status === 'ACTIVE') {
+        p.status = 'STAYED';
+        p.roundScore = calculateRoundScore(p).score;
+      }
+    });
+    endRound();
     return;
   }
 
@@ -508,8 +566,13 @@ function processForcedDrawQueue(queue, returnToPlayerId) {
 
   if (targetPlayer.status === 'FLIP_7') { endRoundImmediatelyOnFlip7(targetIdx); return; }
 
+  renderGame();
   const nextQueue = extraDraws.concat(rest);
-  setTimeout(() => processForcedDrawQueue(nextQueue, returnToPlayerId), 550);
+  const myToken = token !== undefined ? token : state.sequenceToken;
+  setTimeout(() => {
+    if (isStale(myToken)) return;
+    processForcedDrawQueue(nextQueue, returnToPlayerId, myToken);
+  }, 550);
 }
 
 function playerStay(playerIndex) {
@@ -676,17 +739,26 @@ async function callGeminiRaw(prompt) {
 
   for (const model of modelsToTry) {
     try {
+      // Hard timeout: without it a stalled network request would leave the AI "thinking"
+      // forever and the game unable to continue.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.3, maxOutputTokens: 300 }
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timer);
       if (res.ok) {
         const data = await res.json();
-        return data.candidates[0].content.parts[0].text;
+        const text = data && data.candidates && data.candidates[0] &&
+                     data.candidates[0].content && data.candidates[0].content.parts &&
+                     data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
+        if (text) return text;
       }
     } catch (e) {
       console.warn(`Gemini model ${model} failed, trying next...`, e);
@@ -741,27 +813,37 @@ async function chooseGeminiAction(aiIndex) {
 function triggerAITurnIfNeeded() {
   if (state.phase !== 'AI_TURN') return;
   const aiIdx = state.players.findIndex(p => !p.isHuman && p.status === 'ACTIVE');
-  if (aiIdx === -1) return;
+  if (aiIdx === -1) {
+    // Defensive: phase says it's the AI's turn but the AI can't act. Rather than sitting
+    // there forever, hand control back to the normal turn resolution.
+    state.isAiBusy = false;
+    setAiThinking(false);
+    checkTurnOrRoundEnd();
+    return;
+  }
 
   state.isAiBusy = true;
   setAiThinking(true);
+  const token = state.sequenceToken;
+
+  const commit = (action) => {
+    if (isStale(token)) return;
+    state.isAiBusy = false;
+    setAiThinking(false);
+    if (state.phase !== 'AI_TURN' || state.players[aiIdx].status !== 'ACTIVE') { renderGame(); return; }
+    if (action === 'HIT') drawCard(aiIdx); else playerStay(aiIdx);
+  };
 
   if (state.mode === 'gemini') {
-    chooseGeminiAction(aiIdx).then(action => {
-      setTimeout(() => {
-        state.isAiBusy = false;
-        setAiThinking(false);
-        if (action === 'HIT') drawCard(aiIdx); else playerStay(aiIdx);
-      }, 350);
-    });
+    chooseGeminiAction(aiIdx)
+      .catch(() => chooseAIActionHeuristic(aiIdx, 'hard'))
+      .then(action => {
+        if (isStale(token)) return;
+        setTimeout(() => commit(action), 350);
+      });
   } else {
     const delay = Math.floor(Math.random() * 650) + 650;
-    setTimeout(() => {
-      state.isAiBusy = false;
-      setAiThinking(false);
-      const action = chooseAIActionHeuristic(aiIdx, state.mode);
-      if (action === 'HIT') drawCard(aiIdx); else playerStay(aiIdx);
-    }, delay);
+    setTimeout(() => commit(chooseAIActionHeuristic(aiIdx, state.mode)), delay);
   }
 }
 
@@ -916,9 +998,22 @@ function canUndo() {
          state.phase !== 'ROUND_END' && state.phase !== 'GAME_END';
 }
 
+// Undo rewinds to the player's own last decision point. Rewinding onto a CPU turn would
+// be pointless — the CPU would instantly replay its move and cancel out the undo — so we
+// keep popping until we're back on a human turn (or the history runs out).
 function onUndoClick() {
   if (!canUndo()) return;
-  const prev = state.undoStack.pop();
+  bumpSequence(); // cancel any paced continuation still in flight from the old timeline
+
+  let prev = null;
+  while (state.undoStack.length > 0) {
+    prev = state.undoStack.pop();
+    const landsOnHuman = prev.phase === 'PLAYER_TURN' &&
+      prev.players[prev.currentPlayerIndex] && prev.players[prev.currentPlayerIndex].isHuman;
+    if (landsOnHuman) break;
+  }
+  if (!prev) return;
+
   state.players = prev.players;
   state.drawPile = prev.drawPile;
   state.discardPile = prev.discardPile;
@@ -927,7 +1022,12 @@ function onUndoClick() {
   state.dealerIndex = prev.dealerIndex;
   state.roundNumber = prev.roundNumber;
   state.phase = prev.phase;
+  state.isAiBusy = false;
+  setAiThinking(false);
   renderGame();
+
+  // Only nudge the CPU if we genuinely couldn't get back to a human decision point.
+  if (state.phase === 'AI_TURN') triggerAITurnIfNeeded();
 }
 
 function onNextRoundClick() {
@@ -984,7 +1084,11 @@ function formatModelLabel(modelId) {
 
 async function discoverLatestFlashModels(apiKey) {
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    // Same hard timeout rationale as callGeminiRaw: never let a stalled request block play.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, { signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) return [];
     const data = await res.json();
     if (!data.models) return [];
