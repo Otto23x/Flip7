@@ -1,30 +1,15 @@
 {
-  "name": "Flip 7",
-  "short_name": "Flip 7",
-  "description": "Gioca a Flip 7 contro l'IA — un gioco di carte push-your-luck.",
+  "name": "Filotto",
+  "short_name": "Filotto",
+  "description": "Filotto: pesca, rischia e fermati in tempo. Gioco di carte push-your-luck con carte da Scala 40, contro la CPU o online.",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0a1512",
-  "theme_color": "#0a1512",
+  "background_color": "#0c1425",
+  "theme_color": "#0c1425",
   "icons": [
-    {
-      "src": "assets/icons/icon-192.svg",
-      "sizes": "192x192",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    },
-    {
-      "src": "assets/icons/icon-512.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    },
-    {
-      "src": "assets/icons/icon-512.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
-    }
+    { "src": "assets/icons/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "assets/icons/icon-512.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "assets/icons/icon-512.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }

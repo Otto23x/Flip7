@@ -3,28 +3,33 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Flip 7</title>
-<meta name="description" content="Gioca a Flip 7 contro l'IA — un gioco di carte push-your-luck.">
-<meta name="theme-color" content="#0a1512">
+<title>Filotto</title>
+<meta name="description" content="Filotto: pesca, rischia e fermati in tempo. Gioco di carte push-your-luck con carte da Scala 40, contro la CPU o online.">
+<meta name="theme-color" content="#0c1425">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="assets/icons/icon-192.svg">
 <link rel="icon" href="assets/icons/icon-192.svg">
 <style>
 :root {
-  --bg: #0a1512;
-  --panel: #142420;
-  --panel-border: #2b433a;
-  --cell-bg: #1a2e28;
-  --cell-border: #2b433a;
-  --primary: #16d9a3;
-  --primary-light: #5eead4;
-  --text: #eaf5f1;
-  --muted: #86a89c;
-  --blue: #38bdf8;
-  --green: #4ade80;
-  --red: #f87171;
-  --purple: #c084fc;
-  --cyan: #22d3ee;
+  --bg: #0c1425;
+  --bg-2: #101c33;
+  --panel: #172440;
+  --panel-2: #1d2c4d;
+  --panel-border: #2b3d63;
+  --felt: #1b6b4a;
+  --felt-dark: #114530;
+  --felt-border: #2f9a6c;
+  --accent: #f6c453;
+  --accent-light: #ffe08a;
+  --accent-dark: #c9922a;
+  --text: #f3f5fa;
+  --muted: #9aa7bf;
+  --blue: #5cb8ff;
+  --green: #3ddc84;
+  --red: #ff6b6b;
+  --purple: #c18bff;
+  --cyan: #4fd1c5;
+  --shadow: 0 10px 30px rgba(0,0,0,0.55);
 }
 
 * {
@@ -35,9 +40,10 @@
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
+input, textarea { user-select: text; -webkit-user-select: text; }
 
 body {
-  background-color: var(--bg);
+  background: radial-gradient(ellipse at top, var(--bg-2), var(--bg) 60%);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   min-height: 100dvh;
@@ -50,7 +56,7 @@ body {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Screen Views */
+/* Schermate */
 .view-screen {
   position: absolute;
   inset: 0;
@@ -64,40 +70,35 @@ body {
   transition: opacity 0.35s ease, transform 0.35s ease;
   transform: scale(0.97);
   z-index: 10;
+  overflow-y: auto;
 }
-.view-screen.active {
-  opacity: 1;
-  pointer-events: auto;
-  transform: scale(1);
-}
+.view-screen.active { opacity: 1; pointer-events: auto; transform: scale(1); }
 
-/* Android Install Banner */
+/* Banner installazione Android */
 #android-install-banner {
   position: fixed;
   top: calc(12px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 999;
-  background: linear-gradient(135deg, #123023, #0d1f18);
-  border: 1px solid var(--primary);
+  background: linear-gradient(135deg, #1d2c4d, #101c33);
+  border: 1px solid var(--accent);
   border-radius: 30px;
   padding: 8px 18px;
   display: none;
   align-items: center;
   gap: 12px;
   max-width: calc(100vw - 24px);
-  box-shadow: 0 8px 25px rgba(0,0,0,0.8);
+  box-shadow: var(--shadow);
   animation: floatBanner 3s ease-in-out infinite;
 }
-
-/* iOS Guided Install Banner */
 #ios-install-banner {
   position: fixed;
   bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   z-index: 999;
-  background: linear-gradient(135deg, #123023, #0d1f18);
-  border: 1.5px solid var(--primary);
+  background: linear-gradient(135deg, #1d2c4d, #101c33);
+  border: 1.5px solid var(--accent);
   border-radius: 16px;
   padding: 12px 18px;
   max-width: 380px;
@@ -105,7 +106,7 @@ body {
   display: none;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.85);
+  box-shadow: var(--shadow);
   animation: slideUpBanner 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   animation-fill-mode: forwards;
 }
@@ -118,20 +119,17 @@ body {
   50% { transform: translateX(-50%) translateY(-4px); }
 }
 
-/* Pull-to-refresh indicator */
+/* Pull-to-refresh */
 #pull-refresh-indicator {
   position: fixed;
   top: calc(10px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translate(-50%, -60px);
-  width: 42px;
-  height: 42px;
+  width: 42px; height: 42px;
   border-radius: 50%;
-  background: #142420;
+  background: var(--panel);
   border: 1.5px solid var(--panel-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   z-index: 1000;
   opacity: 0;
   transition: transform 0.25s ease, opacity 0.25s ease, border-color 0.2s ease;
@@ -139,56 +137,27 @@ body {
   pointer-events: none;
 }
 #pull-refresh-indicator.pulling { transition: none; }
-#pull-refresh-indicator.ready { border-color: var(--primary); }
-#pull-refresh-indicator svg {
-  width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2;
-  stroke-linecap: round; stroke-linejoin: round; transition: stroke 0.2s ease;
-}
-#pull-refresh-indicator.ready svg { stroke: var(--primary); }
-#pull-refresh-indicator.refreshing svg { stroke: var(--primary); animation: pullSpin 0.7s linear infinite; }
+#pull-refresh-indicator.ready { border-color: var(--accent); }
+#pull-refresh-indicator svg { width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#pull-refresh-indicator.ready svg { stroke: var(--accent); }
+#pull-refresh-indicator.refreshing svg { stroke: var(--accent); animation: pullSpin 0.7s linear infinite; }
 @keyframes pullSpin { to { transform: rotate(360deg); } }
 
-/* Home Screen */
-.home-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 22px;
-  max-width: 400px;
-  width: 100%;
-  text-align: center;
-}
-.app-logo {
-  width: 100%;
-  max-width: 320px;
-  filter: drop-shadow(0 8px 16px rgba(0,0,0,0.6));
-}
-.home-tagline {
-  font-size: 12.5px;
-  color: var(--muted);
-  line-height: 1.5;
-  padding: 0 8px;
-  margin-top: -8px;
-}
-.menu-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
-}
+/* Pulsanti */
 .btn-main {
-  background: linear-gradient(135deg, var(--primary-light), var(--primary));
-  color: #04231b;
+  background: linear-gradient(135deg, var(--accent-light), var(--accent) 55%, var(--accent-dark));
+  color: #2b1d00;
   border: none;
   border-radius: 14px;
   padding: 15px;
   font-weight: 800;
   font-size: 15px;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(22,217,163,0.35);
-  transition: transform 0.15s ease;
+  box-shadow: 0 6px 20px rgba(246,196,83,0.3);
+  transition: transform 0.15s ease, filter 0.15s ease;
 }
-.btn-main:active { transform: scale(0.97); }
+.btn-main:active { transform: scale(0.97); filter: brightness(1.05); }
+.btn-main:disabled { opacity: 0.5; pointer-events: none; }
 .btn-sub {
   background: var(--panel);
   color: var(--text);
@@ -200,63 +169,107 @@ body {
   cursor: pointer;
   transition: all 0.15s ease;
 }
-.btn-sub:active { transform: scale(0.97); background: #1a2e28; }
+.btn-sub:active { transform: scale(0.97); background: var(--panel-2); }
+.btn-danger { background: linear-gradient(135deg, #ff7b7b, #d33) !important; color: #fff !important; box-shadow: 0 6px 18px rgba(255,107,107,0.3) !important; }
 
-/* Setup Screen */
+/* Home */
+.home-container {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 20px; max-width: 400px; width: 100%; text-align: center;
+}
+.app-logo { width: 100%; max-width: 330px; filter: drop-shadow(0 10px 18px rgba(0,0,0,0.6)); }
+.home-tagline { font-size: 12.5px; color: var(--muted); line-height: 1.55; padding: 0 8px; margin-top: -6px; }
+.home-tagline strong { color: var(--accent-light); }
+.menu-buttons { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.home-footer { font-size: 10.5px; color: var(--muted); opacity: 0.7; }
+
+/* Setup / Online */
 .ritual-card {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 20px;
-  padding: 22px;
-  max-width: 420px;
+  padding: 20px;
+  max-width: 440px;
   width: 100%;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  box-shadow: var(--shadow);
+  margin: auto 0;
 }
-.ritual-title {
-  font-size: 17px;
-  font-weight: 800;
-  color: var(--primary);
-  text-align: center;
-  margin-bottom: 18px;
-}
+.ritual-title { font-size: 18px; font-weight: 800; color: var(--accent); text-align: center; margin-bottom: 16px; }
 .setup-group { margin-bottom: 14px; }
 .setup-group label {
-  display: block;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  margin-bottom: 6px;
+  display: block; font-size: 11px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
 }
 .setup-group input, .setup-group select {
   width: 100%;
-  background: var(--cell-bg);
-  border: 1px solid var(--cell-border);
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
   color: var(--text);
   border-radius: 10px;
   padding: 11px 12px;
   font-size: 14px;
   font-family: inherit;
 }
-.setup-group input:focus, .setup-group select:focus { outline: 1.5px solid var(--primary); }
-.setup-row {
-  display: flex;
-  gap: 10px;
-  margin-top: 18px;
-}
+.setup-group input:focus, .setup-group select:focus { outline: 1.5px solid var(--accent); }
+.setup-row { display: flex; gap: 10px; margin-top: 16px; }
 .setup-row button { flex: 1; }
 
-/* Game Screen */
-#screen-game { padding: 10px; justify-content: space-between; }
+.level-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.level-card {
+  background: var(--bg);
+  border: 1.5px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 10px 6px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.level-card .ico { font-size: 20px; }
+.level-card .ttl { font-size: 12.5px; font-weight: 800; margin-top: 3px; }
+.level-card .tag { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.level-card.selected { border-color: var(--accent); background: rgba(246,196,83,0.1); box-shadow: 0 0 0 1px var(--accent) inset; }
+.level-desc { font-size: 11px; color: var(--muted); line-height: 1.45; margin-top: 8px; min-height: 32px; }
+.level-card.selected .ttl { color: var(--accent-light); }
+
+.seg { display: flex; gap: 6px; }
+.seg-btn {
+  flex: 1;
+  background: var(--bg);
+  border: 1.5px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 0;
+  font-weight: 800;
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.seg-btn.selected { border-color: var(--accent); background: rgba(246,196,83,0.14); color: var(--accent-light); }
+
+.online-status { font-size: 11.5px; color: var(--muted); text-align: center; min-height: 16px; margin-top: 10px; line-height: 1.4; word-break: break-all; }
+.online-status.error { color: var(--red); }
+.online-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; margin: 14px 0; text-transform: uppercase; letter-spacing: 1px; }
+.online-divider::before, .online-divider::after { content: ''; flex: 1; height: 1px; background: var(--panel-border); }
+.join-row { display: flex; gap: 8px; }
+.join-row input { flex: 1; text-transform: uppercase; letter-spacing: 6px; font-weight: 800; text-align: center; font-size: 18px !important; }
+.join-row button { flex: 0 0 auto; padding: 0 18px; }
+.room-code {
+  font-size: 44px; font-weight: 900; letter-spacing: 12px; color: var(--accent-light);
+  text-align: center; margin: 8px 0 4px; padding-left: 12px;
+  text-shadow: 0 4px 14px rgba(246,196,83,0.35);
+}
+.waiting-dots { display: flex; justify-content: center; gap: 5px; margin: 10px 0 14px; }
+.waiting-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: bounceDot 1.2s infinite; }
+.waiting-dots span:nth-child(2) { animation-delay: 0.2s; }
+.waiting-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+/* Partita */
+#screen-game { padding: 10px; justify-content: space-between; overflow: hidden; }
 
 .status-bar {
-  width: 100%;
-  max-width: 480px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #142420;
+  width: 100%; max-width: 480px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 999px;
   padding: 9px 16px;
@@ -264,235 +277,237 @@ body {
   gap: 8px;
 }
 .status-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.status-dot {
-  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
-  animation: turnGlow 2s infinite ease-in-out;
-  transition: background 0.3s ease;
-}
+.status-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; animation: turnGlow 2s infinite ease-in-out; transition: background 0.3s ease; }
 @keyframes turnGlow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.3); } }
-.status-text {
-  font-size: 12.5px; font-weight: 700; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.status-right {
-  font-size: 11.5px; color: var(--muted); font-weight: 600;
-  white-space: nowrap; flex-shrink: 0;
-}
-.status-right strong { color: var(--primary-light); }
+.status-text { font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-right { font-size: 11.5px; color: var(--muted); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+.status-right strong { color: var(--accent-light); }
 .thinking-dots { display: flex; gap: 3px; flex-shrink: 0; }
-.thinking-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--primary); animation: bounceDot 1.2s infinite; }
+.thinking-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: bounceDot 1.2s infinite; }
 .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
 .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes bounceDot { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1.2); opacity: 1; } }
 
 .game-message-bar {
-  width: 100%;
-  max-width: 480px;
-  min-height: 18px;
+  width: 100%; max-width: 480px;
+  min-height: 20px;
   text-align: center;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--primary-light);
+  font-size: 12px; font-weight: 700;
+  color: var(--accent-light);
   opacity: 0;
   transition: opacity 0.25s ease;
   padding: 2px 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .game-message-bar.show { opacity: 1; }
 
 .arena {
-  width: 100%;
-  max-width: 480px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  width: 100%; max-width: 480px;
+  display: flex; flex-direction: column; gap: 10px;
   margin: auto 0;
+  flex: 1 1 auto;
+  max-height: 560px;
+  padding: 10px;
+  border-radius: 22px;
+  background: radial-gradient(ellipse at center, var(--felt), var(--felt-dark) 85%);
+  border: 2px solid var(--felt-border);
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.35), 0 12px 30px rgba(0,0,0,0.5);
 }
 
 .player-zone {
-  background: var(--panel);
-  border: 1.5px solid var(--panel-border);
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex; flex-direction: column; justify-content: center;
+  background: rgba(8, 20, 40, 0.72);
+  border: 1.5px solid rgba(255,255,255,0.08);
   border-radius: 16px;
   padding: 10px 12px;
-  transition: opacity 0.3s ease, border-color 0.3s ease;
+  transition: opacity 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  backdrop-filter: blur(2px);
 }
 .player-zone.inactive-turn { opacity: 0.62; }
-.player-zone.active-turn { border-color: var(--primary); }
+.player-zone.active-turn { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(246,196,83,0.35), 0 0 22px rgba(246,196,83,0.25); }
+.player-zone.is-busted { border-color: rgba(255,107,107,0.6); }
 
-.zone-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  gap: 8px;
-}
-.zone-identity { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.zone-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 8px; }
+.zone-identity { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .zone-avatar {
   width: 30px; height: 30px; border-radius: 50%;
-  background: linear-gradient(135deg, #1f3a30, #142420);
+  background: linear-gradient(135deg, var(--panel-2), var(--panel));
   border: 1px solid var(--panel-border);
   display: flex; align-items: center; justify-content: center;
   font-size: 15px; flex-shrink: 0;
 }
-.zone-name { font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zone-name { font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 .zone-total { font-size: 10.5px; color: var(--muted); }
-.zone-total strong { color: var(--primary-light); }
-
+.zone-total strong { color: var(--accent-light); }
+.zone-badges { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
 .zone-stats { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .zone-round-score {
-  background: #0a1512;
-  border: 1px solid rgba(22,163,74,0.4);
+  background: var(--bg);
+  border: 1px solid rgba(61,220,132,0.4);
   border-radius: 10px;
   padding: 3px 9px;
   text-align: center;
   min-width: 44px;
 }
-.zone-round-score .val { font-size: 15px; font-weight: 900; color: #4ade80; line-height: 1.1; }
-.zone-round-score .lbl { font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
-.zone-unique { text-align: center; min-width: 30px; }
-.zone-unique .val { font-size: 15px; font-weight: 900; color: var(--primary); line-height: 1.1; }
-.zone-unique .lbl { font-size: 7.5px; color: var(--muted); text-transform: uppercase; }
+.zone-round-score .val { font-size: 15px; font-weight: 900; color: var(--green); line-height: 1.1; }
+.zone-round-score .lbl, .zone-unique .lbl { font-size: 7.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.zone-unique { text-align: center; min-width: 34px; }
+.zone-unique .val { font-size: 15px; font-weight: 900; color: var(--accent); line-height: 1.1; }
 
 .badge-status {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 9px;
-  font-weight: 800;
-  border: 1px solid;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 9px; font-weight: 800; border: 1px solid;
+  text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap;
 }
-.status-active { background: rgba(22,163,74,0.18); color: #4ade80; border-color: rgba(22,163,74,0.4); }
-.status-stayed { background: rgba(2,132,199,0.18); color: #7dd3fc; border-color: rgba(2,132,199,0.4); }
-.status-busted { background: rgba(220,38,38,0.18); color: #fca5a5; border-color: rgba(220,38,38,0.4); }
-.status-freezed { background: rgba(8,145,178,0.18); color: #67e8f9; border-color: rgba(8,145,178,0.4); }
-.status-flip7 { background: var(--primary); color: #04231b; border-color: var(--primary); }
+.status-active { background: rgba(61,220,132,0.15); color: var(--green); border-color: rgba(61,220,132,0.4); }
+.status-stayed { background: rgba(92,184,255,0.15); color: var(--blue); border-color: rgba(92,184,255,0.4); }
+.status-busted { background: rgba(255,107,107,0.18); color: #ffb3b3; border-color: rgba(255,107,107,0.45); }
+.status-frozen { background: rgba(79,209,197,0.15); color: var(--cyan); border-color: rgba(79,209,197,0.4); }
+.status-filotto { background: var(--accent); color: #2b1d00; border-color: var(--accent); }
+.badge-bank {
+  display: none; align-items: center;
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 9px; font-weight: 800;
+  background: rgba(246,196,83,0.15); color: var(--accent-light); border: 1px solid rgba(246,196,83,0.45);
+}
 
 .card-strip {
-  display: flex;
-  gap: 6px;
+  display: flex; gap: 6px;
   overflow-x: auto;
-  padding: 2px;
-  min-height: 62px;
+  padding: 3px 2px;
+  min-height: 70px;
   scrollbar-width: none;
 }
 .card-strip::-webkit-scrollbar { display: none; }
 .card-strip:empty::after {
   content: 'Nessuna carta';
-  font-size: 11px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  padding-left: 4px;
+  font-size: 11px; color: var(--muted);
+  display: flex; align-items: center; padding-left: 4px;
 }
 
-.card-chip {
-  width: 42px;
-  min-width: 42px;
-  height: 58px;
-  border-radius: 8px;
-  border: 1.5px solid;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 900;
+/* Carte */
+.pcard {
+  width: 46px; min-width: 46px; height: 64px;
+  border-radius: 7px;
+  position: relative;
   flex-shrink: 0;
-  box-shadow: 0 3px 6px rgba(0,0,0,0.4);
-  animation: cardPop 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background: #fdfbf5;
+  border: 1px solid #d9d0bd;
+  box-shadow: 0 3px 6px rgba(0,0,0,0.45);
+  font-family: Georgia, 'Times New Roman', serif;
+  animation: cardPop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: hidden;
 }
-@keyframes cardPop { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-.card-chip.chip-number { background: linear-gradient(160deg, #1d4ed8, #1e1b4b); border-color: #60a5fa; color: #fff; font-size: 19px; }
-.card-chip.chip-bust-duplicate {
-  background: linear-gradient(160deg, #dc2626, #450a0a);
-  border-color: #f87171;
-  box-shadow: 0 0 10px rgba(248,113,113,0.6);
+@keyframes cardPop { from { transform: scale(0.5) rotate(-6deg); opacity: 0; } to { transform: scale(1) rotate(0); opacity: 1; } }
+.pcard.mini { width: 40px; min-width: 40px; height: 56px; }
+.pcard .rk { position: absolute; top: 3px; left: 4px; font-size: 12px; font-weight: 800; line-height: 1; display: flex; flex-direction: column; align-items: center; }
+.pcard .rk i { font-style: normal; font-size: 9px; }
+.pcard .rk-b { top: auto; left: auto; bottom: 3px; right: 4px; transform: rotate(180deg); }
+.pcard .st { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+.pcard.red { color: #c62828; }
+.pcard.black { color: #1c1c1c; }
+.pcard .big { position: absolute; left: 0; right: 0; top: 9px; text-align: center; font-size: 22px; font-weight: 900; line-height: 1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.pcard .lbl { position: absolute; left: 0; right: 0; bottom: 5px; text-align: center; font-size: 7px; font-weight: 800; letter-spacing: 0.3px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.pcard.joker { background: linear-gradient(160deg, #fff3b0, #f9c74f 55%, #f3722c); border-color: #f9a825; color: #5a2a00; }
+.pcard.joker .big { font-size: 26px; top: 7px; }
+.pcard.mod { background: linear-gradient(160deg, #ffe08a, #f6c453 50%, #c9922a); border-color: #ffe08a; color: #2b1d00; }
+.pcard.power { color: #fff; border-color: rgba(255,255,255,0.35); }
+.pcard.power .big { top: 8px; font-size: 24px; }
+.pcard.power .lbl { text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+.pcard.pw-freeze { background: linear-gradient(160deg, #7dd3fc, #0369a1); }
+.pcard.pw-draw3 { background: linear-gradient(160deg, #f9a8d4, #9d174d); }
+.pcard.pw-shield { background: linear-gradient(160deg, #86efac, #166534); }
+.pcard.pw-peek { background: linear-gradient(160deg, #c4b5fd, #5b21b6); }
+.pcard.pw-swap { background: linear-gradient(160deg, #fdba74, #c2410c); }
+.pcard.pw-bank { background: linear-gradient(160deg, #fde68a, #b45309); }
+.pcard.spent { opacity: 0.55; filter: saturate(0.6); }
+.pcard.bust-dup {
+  border: 2px solid var(--red);
+  box-shadow: 0 0 12px rgba(255,107,107,0.75);
   animation: bustPulse 1s ease-in-out infinite;
 }
-@keyframes bustPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.06); }
+.pcard.bust-dup::after {
+  content: '✕';
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 34px; font-weight: 900; color: rgba(211,47,47,0.85);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
-.card-chip.chip-modifier { background: linear-gradient(160deg, #f97316, #7c2d12); border-color: #fdba74; color: #fff; font-size: 13px; }
-.card-chip.chip-action { background: linear-gradient(160deg, var(--purple), #581c87); border-color: #c084fc; color: #fff; font-size: 16px; }
+@keyframes bustPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
 
-.bottom-bar {
-  width: 100%;
-  max-width: 480px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* Sbircia */
+.peek-box {
+  width: 100%; max-width: 480px;
+  display: none; align-items: center; gap: 10px;
+  background: rgba(91,33,182,0.25);
+  border: 1px solid rgba(196,181,253,0.5);
+  border-radius: 14px;
+  padding: 6px 12px;
+  margin-top: 8px;
 }
+.peek-box .peek-title { font-size: 11px; font-weight: 800; color: #ddd6fe; text-transform: uppercase; letter-spacing: 0.4px; }
+.peek-box .peek-hint { font-size: 11.5px; color: var(--text); }
+
+.bottom-bar { width: 100%; max-width: 480px; display: flex; align-items: center; gap: 6px; }
 .icon-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #0d1f18;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--panel);
   border: 1.5px solid var(--panel-border);
   color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; cursor: pointer;
   transition: all 0.15s ease;
 }
-.icon-btn:active { transform: scale(0.88); color: var(--primary); border-color: var(--primary); }
+.icon-btn:active { transform: scale(0.88); color: var(--accent); border-color: var(--accent); }
 .icon-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .icon-btn:disabled { opacity: 0.3; pointer-events: none; }
 
 .action-buttons { display: flex; gap: 8px; flex: 1; }
 .btn-hit, .btn-stay {
-  flex: 1;
-  padding: 13px 8px;
-  border-radius: 14px;
-  border: none;
-  font-weight: 900;
-  font-size: 14px;
+  flex: 1; padding: 13px 8px;
+  border-radius: 14px; border: none;
+  font-weight: 900; font-size: 14px; letter-spacing: 0.5px;
   cursor: pointer;
   transition: transform 0.15s ease;
   box-shadow: 0 6px 16px rgba(0,0,0,0.35);
 }
-.btn-hit { background: linear-gradient(135deg, #4ade80, #16a34a); color: #052e12; }
-.btn-stay { background: linear-gradient(135deg, #38bdf8, #0284c7); color: #041c2e; }
+.btn-hit { background: linear-gradient(135deg, #5eead4, #059669); color: #03251b; }
+.btn-stay { background: linear-gradient(135deg, #ffd166, #f3722c); color: #3a1600; }
 .btn-hit:active, .btn-stay:active { transform: scale(0.96); }
 .btn-hit:disabled, .btn-stay:disabled { opacity: 0.35; pointer-events: none; }
 
-.turn-prompt {
-  width: 100%;
-  max-width: 480px;
-  text-align: center;
-  font-size: 11.5px;
-  color: var(--muted);
-  min-height: 15px;
-}
-.turn-prompt strong { color: var(--primary-light); }
+.turn-prompt { width: 100%; max-width: 480px; text-align: center; font-size: 11.5px; color: var(--muted); min-height: 15px; margin: 6px 0; }
+.turn-prompt strong { color: var(--accent-light); }
 
-/* Dialogs */
+/* Finestre */
 dialog {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--panel-border);
   border-radius: 18px;
   padding: 20px;
-  max-width: 420px;
+  max-width: 440px;
   width: calc(100vw - 40px);
   max-height: calc(100dvh - 60px);
   overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0,0,0,0.7);
-  position: fixed;
-  inset: 0;
-  margin: auto;
+  position: fixed; inset: 0; margin: auto;
 }
 dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.modal-title { font-size: 16px; font-weight: 800; color: var(--primary); }
+.modal-title { font-size: 16px; font-weight: 800; color: var(--accent); }
+.modal-note { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 4px; }
+.modal-note strong { color: var(--accent-light); }
 .rules-section { margin-bottom: 12px; }
-.rules-section h4 { font-size: 12.5px; font-weight: 800; margin-bottom: 4px; }
-.rules-section p, .rules-section li { font-size: 12px; color: #cfc7be; line-height: 1.5; }
+.rules-section h4 { font-size: 12.5px; font-weight: 800; margin-bottom: 4px; color: var(--accent-light); }
+.rules-section p, .rules-section li { font-size: 12px; color: #d5dbe8; line-height: 1.5; }
 .rules-section ul { padding-left: 18px; }
+.rules-section strong { color: var(--text); }
+.rules-cards { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 4px; }
+.rules-cards .pcard { animation: none; }
+.rules-cards .pcard.power .big, .rules-cards .pcard.mod .big, .rules-cards .pcard.joker .big { pointer-events: none; }
 
 /* Toast */
 #toast {
@@ -500,166 +515,237 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
   top: calc(64px + env(safe-area-inset-top, 0px));
   left: 50%;
   transform: translateX(-50%) translateY(-14px);
-  background: #142420;
-  border: 1px solid var(--primary);
+  background: var(--panel);
+  border: 1px solid var(--accent);
   color: var(--text);
   padding: 10px 20px;
   border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 700;
-  opacity: 0;
-  pointer-events: none;
+  font-size: 12.5px; font-weight: 700;
+  opacity: 0; pointer-events: none;
   transition: all 0.3s ease;
   z-index: 900;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-  max-width: 90vw;
-  text-align: center;
+  box-shadow: var(--shadow);
+  max-width: 90vw; text-align: center;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-/* Round/Game end summary */
+/* Riepiloghi */
 .summary-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: #0a1512;
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--bg);
   border-radius: 10px;
   padding: 10px 12px;
   margin-bottom: 8px;
   font-size: 13px;
 }
-.summary-row .name { font-weight: 700; }
-.summary-row .gain { color: #4ade80; font-weight: 800; }
+.summary-row .name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-row .gain { color: var(--green); font-weight: 800; }
 .summary-row .total { color: var(--muted); font-size: 11px; }
+.summary-row .total strong { color: var(--accent-light); font-size: 13px; }
 
-.stat-block {
-  background: #1a2e28;
-  padding: 8px 10px;
-  border-radius: 8px;
-  margin-bottom: 8px;
-}
-.stat-block .stat-title { font-weight: 700; color: var(--primary-light); margin-bottom: 2px; font-size: 12.5px; }
+.stat-block { background: var(--panel-2); padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; }
+.stat-block .stat-title { font-weight: 700; color: var(--accent-light); margin-bottom: 2px; font-size: 12.5px; }
 .stat-block .stat-row { display: flex; justify-content: space-between; font-size: 11.5px; }
+.stat-block .ok { color: var(--green); }
+.stat-block .ko { color: var(--red); }
+
+.hint { font-size: 10.5px; color: var(--muted); display: block; margin-top: 4px; line-height: 1.4; word-break: break-all; }
 </style>
 </head>
 <body>
 
-<!-- Android Native Install Banner -->
+<!-- Banner installazione Android -->
 <div id="android-install-banner">
-  <span style="font-size: 12.5px; font-weight: 700;">Installa Flip 7</span>
+  <span style="font-size: 12.5px; font-weight: 700;">Installa Filotto</span>
   <button class="btn-main" style="padding: 5px 12px; font-size: 11px;" onclick="triggerAndroidInstall()">Installa</button>
   <button style="background:none; border:none; color:var(--muted); font-size: 14px; cursor:pointer;" onclick="document.getElementById('android-install-banner').style.display='none'">✕</button>
 </div>
 
-<!-- iOS Guided Install Banner -->
+<!-- Banner installazione iOS -->
 <div id="ios-install-banner">
   <div style="display:flex; justify-content:space-between; align-items:center;">
-    <span style="font-size: 13px; font-weight: 800; color:var(--primary);">📲 Installa su iPhone / iPad</span>
+    <span style="font-size: 13px; font-weight: 800; color:var(--accent);">📲 Installa su iPhone / iPad</span>
     <button style="background:none; border:none; color:var(--muted); font-size: 14px; cursor:pointer;" onclick="dismissIosBanner()">✕</button>
   </div>
-  <p style="font-size: 12px; color: #cfc7be; line-height: 1.4;">
+  <p style="font-size: 12px; color: #d5dbe8; line-height: 1.4;">
     Tocca l'icona <strong>Condividi</strong> (📤 in Safari) e seleziona <strong>"Aggiungi alla schermata Home" ➕</strong> per giocare a tutto schermo.
   </p>
 </div>
 
-<!-- Pull-to-refresh indicator -->
 <div id="pull-refresh-indicator">
   <svg id="pull-refresh-icon" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
 </div>
 
-<!-- SCREEN 1: HOME MENU -->
+<!-- SCHERMATA 1: HOME -->
 <div id="screen-home" class="view-screen active">
   <div class="home-container">
-    <img src="./assets/logo.svg" alt="Flip 7 Logo" class="app-logo">
-    <p class="home-tagline">Pesca carte, accumula punti, ma occhio ai doppioni: due numeri uguali e perdi tutto il turno. Primo a 200 punti vince.</p>
+    <img src="./assets/logo.svg" alt="Filotto" class="app-logo">
+    <p class="home-tagline">Pesca carte e accumula punti, ma occhio al <strong>Doppione</strong>: due carte uguali e la mano va in fumo. Sette carte diverse fanno <strong>Filotto</strong>. Fermati al momento giusto e taglia il traguardo per primo.</p>
     <div class="menu-buttons">
-      <button class="btn-main" onclick="openSetupScreen()">🎴 Gioca Ora</button>
-      <button class="btn-sub" onclick="document.getElementById('rules-modal').showModal()">📖 Come si Gioca</button>
-      <button class="btn-sub" onclick="openStatsModal()">📊 Statistiche & Storico</button>
-      <button class="btn-sub" onclick="openSettingsModal()">⚙️ Opzioni & Chiave AI</button>
+      <button class="btn-main" onclick="openSetupScreen()">🃏 Gioca contro la CPU</button>
+      <button class="btn-sub" onclick="openOnlineScreen()">🌐 Gioca Online</button>
+      <button class="btn-sub" onclick="openDialog('rules-modal')">📖 Come si Gioca</button>
+      <button class="btn-sub" onclick="openStatsModal()">📊 Statistiche</button>
+      <button class="btn-sub" onclick="openSettingsModal()">⚙️ Opzioni</button>
       <button class="btn-sub" onclick="exitApp()">🚪 Esci</button>
     </div>
+    <div class="home-footer">Carte da Scala 40 · 2 giocatori · funziona offline</div>
   </div>
 </div>
 
-<!-- SCREEN 2: SETUP -->
+<!-- SCHERMATA 2: SETUP CONTRO LA CPU -->
 <div id="screen-setup" class="view-screen">
   <div class="ritual-card">
-    <div class="ritual-title">Prepara il Tavolo</div>
+    <div class="ritual-title">Prepara il tavolo</div>
 
     <div class="setup-group">
       <label>Il tuo nome</label>
-      <input type="text" id="p1-name-input" placeholder="Giocatore" onchange="saveProfile()">
+      <input type="text" id="p1-name-input" class="name-input" maxlength="16" placeholder="Giocatore" onchange="onNameChange('p1-name-input')">
     </div>
 
     <div class="setup-group">
       <label>Avversario</label>
-      <select id="difficulty-select" onchange="onDifficultyChange(this.value)">
-        <option value="easy">Facile (Prudente)</option>
-        <option value="normal" selected>Normale (Bilanciato)</option>
-        <option value="hard">Difficile (Calcolatore)</option>
-        <option value="gemini">AI Suprema (Gemini)</option>
-      </select>
-      <div id="ai-model-caption" style="display:none; font-size:10.5px; color:var(--muted); padding:4px 2px 0;"></div>
+      <div class="level-grid">
+        <div class="level-card" data-level="easy" onclick="selectLevel('easy')"><div class="ico">🙂</div><div class="ttl">Facile</div><div class="tag">Prudente</div></div>
+        <div class="level-card" data-level="normal" onclick="selectLevel('normal')"><div class="ico">🧮</div><div class="ttl">Medio</div><div class="tag">Calcolatore</div></div>
+        <div class="level-card" data-level="hard" onclick="selectLevel('hard')"><div class="ico">🧠</div><div class="ttl">Difficile</div><div class="tag">Stratega</div></div>
+      </div>
+      <div class="level-desc" id="level-desc"></div>
+    </div>
+
+    <div class="setup-group">
+      <label>Punteggio da raggiungere</label>
+      <div class="seg">
+        <button class="seg-btn" data-target="101" onclick="selectTarget(101)">101</button>
+        <button class="seg-btn" data-target="201" onclick="selectTarget(201)">201</button>
+        <button class="seg-btn" data-target="301" onclick="selectTarget(301)">301</button>
+        <button class="seg-btn" data-target="401" onclick="selectTarget(401)">401</button>
+        <button class="seg-btn" data-target="501" onclick="selectTarget(501)">501</button>
+      </div>
     </div>
 
     <div class="setup-row">
       <button class="btn-sub" onclick="navigateScreen('screen-home')">Indietro</button>
-      <button class="btn-main" onclick="startNewGame()">Inizia Partita</button>
+      <button class="btn-main" onclick="startSoloGame()">Inizia partita</button>
     </div>
   </div>
 </div>
 
-<!-- SCREEN 3: GAME -->
+<!-- SCHERMATA 3: ONLINE -->
+<div id="screen-online" class="view-screen">
+  <div class="ritual-card">
+    <div class="ritual-title">🌐 Gioca online</div>
+
+    <div id="online-forms">
+      <div class="setup-group">
+        <label>Il tuo nome</label>
+        <input type="text" id="online-name-input" class="name-input" maxlength="16" placeholder="Giocatore" onchange="onNameChange('online-name-input')">
+      </div>
+
+      <div class="setup-group">
+        <label>Punteggio da raggiungere (lo decide chi crea la stanza)</label>
+        <div class="seg">
+          <button class="seg-btn" data-target="101" onclick="selectTarget(101)">101</button>
+          <button class="seg-btn" data-target="201" onclick="selectTarget(201)">201</button>
+          <button class="seg-btn" data-target="301" onclick="selectTarget(301)">301</button>
+          <button class="seg-btn" data-target="401" onclick="selectTarget(401)">401</button>
+          <button class="seg-btn" data-target="501" onclick="selectTarget(501)">501</button>
+        </div>
+      </div>
+
+      <button class="btn-main" style="width:100%;" onclick="onlineCreateRoom()">➕ Crea una stanza</button>
+
+      <div class="online-divider">oppure</div>
+
+      <div class="setup-group">
+        <label>Entra con un codice</label>
+        <div class="join-row">
+          <input type="text" id="room-code-input" maxlength="4" placeholder="ABCD" autocomplete="off" autocapitalize="characters">
+          <button class="btn-sub" onclick="onlineJoinRoom()">Entra</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="online-waiting" style="display:none; text-align:center;">
+      <p style="font-size:12.5px; color:var(--muted);">Codice della stanza</p>
+      <div class="room-code" id="room-code-display">····</div>
+      <p style="font-size:12px; color:#d5dbe8; line-height:1.45;">Condividilo con l'avversario: la partita parte appena entra.</p>
+      <div class="waiting-dots"><span></span><span></span><span></span></div>
+      <button class="btn-sub" style="width:100%;" onclick="onlineCancel()">Annulla</button>
+    </div>
+
+    <div class="online-status" id="online-status"></div>
+
+    <div class="setup-row">
+      <button class="btn-sub" style="flex:1;" onclick="leaveOnline(true); navigateScreen('screen-home')">Indietro</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCHERMATA 4: PARTITA -->
 <div id="screen-game" class="view-screen">
   <div class="status-bar">
     <div class="status-left">
-      <span id="status-dot" class="status-dot" style="background:#0284c7;"></span>
+      <span id="status-dot" class="status-dot" style="background:var(--blue);"></span>
       <span id="status-text" class="status-text">Turno</span>
     </div>
     <div id="status-thinking-dots" class="thinking-dots" style="display:none;">
       <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
     </div>
-    <div id="status-right" class="status-right">Tu <strong>0</strong> · IA <strong>0</strong></div>
+    <div id="status-right" class="status-right">🎯 <strong>201</strong> · Mazzo <strong>0</strong></div>
   </div>
 
   <div id="game-message-bar" class="game-message-bar">&nbsp;</div>
 
   <div class="arena">
-    <div id="ai-zone" class="player-zone">
+    <div id="opp-zone" class="player-zone">
       <div class="zone-header">
         <div class="zone-identity">
-          <div class="zone-avatar">🤖</div>
-          <div>
-            <div class="zone-name" id="ai-name">IA</div>
-            <div class="zone-total">Totale: <strong id="ai-total">0</strong> pt</div>
+          <div class="zone-avatar" id="opp-avatar">🤖</div>
+          <div style="min-width:0;">
+            <div class="zone-name" id="opp-name">CPU</div>
+            <div class="zone-total">Totale: <strong id="opp-total">0</strong> pt</div>
           </div>
-          <span id="ai-status-badge" class="badge-status status-active">ATTIVO</span>
+          <div class="zone-badges">
+            <span id="opp-status-badge" class="badge-status status-active">IN GIOCO</span>
+            <span id="opp-bank" class="badge-bank"></span>
+          </div>
         </div>
         <div class="zone-stats">
-          <div class="zone-round-score"><div class="val" id="ai-round-score">0</div><div class="lbl">Mano</div></div>
-          <div class="zone-unique"><div class="val"><span id="ai-unique">0</span>/7</div><div class="lbl">Unici</div></div>
+          <div class="zone-round-score"><div class="val" id="opp-round-score">0</div><div class="lbl">Mano</div></div>
+          <div class="zone-unique"><div class="val"><span id="opp-unique">0</span>/7</div><div class="lbl">Diverse</div></div>
         </div>
       </div>
-      <div id="ai-cards" class="card-strip"></div>
+      <div id="opp-cards" class="card-strip"></div>
     </div>
 
-    <div id="human-zone" class="player-zone">
+    <div id="me-zone" class="player-zone">
       <div class="zone-header">
         <div class="zone-identity">
           <div class="zone-avatar">🧑</div>
-          <div>
-            <div class="zone-name" id="human-name">Tu</div>
-            <div class="zone-total">Totale: <strong id="human-total">0</strong> pt</div>
+          <div style="min-width:0;">
+            <div class="zone-name" id="me-name">Tu</div>
+            <div class="zone-total">Totale: <strong id="me-total">0</strong> pt</div>
           </div>
-          <span id="human-status-badge" class="badge-status status-active">ATTIVO</span>
+          <div class="zone-badges">
+            <span id="me-status-badge" class="badge-status status-active">IN GIOCO</span>
+            <span id="me-bank" class="badge-bank"></span>
+          </div>
         </div>
         <div class="zone-stats">
-          <div class="zone-round-score"><div class="val" id="human-round-score">0</div><div class="lbl">Mano</div></div>
-          <div class="zone-unique"><div class="val"><span id="human-unique">0</span>/7</div><div class="lbl">Unici</div></div>
+          <div class="zone-round-score"><div class="val" id="me-round-score">0</div><div class="lbl">Mano</div></div>
+          <div class="zone-unique"><div class="val"><span id="me-unique">0</span>/7</div><div class="lbl">Diverse</div></div>
         </div>
       </div>
-      <div id="human-cards" class="card-strip"></div>
+      <div id="me-cards" class="card-strip"></div>
+    </div>
+  </div>
+
+  <div id="peek-box" class="peek-box">
+    <div id="peek-card"></div>
+    <div>
+      <div class="peek-title">👁️ Prossima carta del mazzo</div>
+      <div class="peek-hint" id="peek-hint"></div>
     </div>
   </div>
 
@@ -673,140 +759,157 @@ dialog::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); }
       <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
     </button>
     <div class="action-buttons">
-      <button id="btn-hit" class="btn-hit" onclick="onHitClick()">HIT</button>
-      <button id="btn-stay" class="btn-stay" onclick="onStayClick()">STAY</button>
+      <button id="btn-hit" class="btn-hit" onclick="onHitClick()">PESCA</button>
+      <button id="btn-stay" class="btn-stay" onclick="onStayClick()">STOP</button>
     </div>
-    <button class="icon-btn" title="Regole" onclick="document.getElementById('rules-modal').showModal()">
+    <button class="icon-btn" title="Regole" onclick="openDialog('rules-modal')">
       <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
     </button>
-    <button class="icon-btn" title="Ricomincia" onclick="restartMatch()">
+    <button id="btn-restart" class="icon-btn" title="Ricomincia" onclick="restartMatch()">
       <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
     </button>
   </div>
 </div>
 
-<!-- MODALS -->
+<!-- FINESTRE -->
 
-<!-- Rules Modal -->
 <dialog id="rules-modal">
   <div class="modal-header">
-    <span class="modal-title">📖 Come si Gioca</span>
-    <button class="btn-sub" style="padding:4px 8px;" onclick="document.getElementById('rules-modal').close()">✕</button>
+    <span class="modal-title">📖 Come si gioca</span>
+    <button class="btn-sub" style="padding:4px 8px;" onclick="closeDialog('rules-modal')">✕</button>
   </div>
   <div class="rules-section">
-    <h4 style="color:var(--primary-light);">🎯 Obiettivo</h4>
-    <p>Pesca carte Numero per accumulare punti. Se peschi due volte lo stesso numero: <strong>BUST</strong>, perdi tutti i punti della mano. Puoi fermarti quando vuoi con <strong>STAY</strong>. Primo a <strong>200 punti</strong> vince.</p>
+    <h4>🎯 Obiettivo</h4>
+    <p>A ogni turno scegli: <strong>PESCA</strong> una carta o fai <strong>STOP</strong> per tenere i punti della mano. Se peschi una carta con lo stesso valore di una che hai già (due Re, due 7…) è <strong>DOPPIONE</strong>: perdi tutti i punti della mano. I semi non contano. Vince chi per primo raggiunge il <strong>traguardo scelto</strong> (101, 201, 301, 401 o 501) a fine mano; in caso di parità si continua.</p>
   </div>
   <div class="rules-section">
-    <h4 style="color:var(--primary-light);">🎉 Bonus Flip 7</h4>
-    <p>7 numeri diversi davanti a te: la mano finisce subito per tutti e ottieni <strong>+15 punti</strong>.</p>
+    <h4>🂡 Le carte (2 mazzi da Scala 40)</h4>
+    <p><strong>Asso = 1</strong>, dal <strong>2 al 10</strong> il valore stampato, <strong>J, Q e K = 10</strong>. Sono carte diverse tra loro: J e Q non fanno Doppione.</p>
+    <div class="rules-cards">
+      <div class="pcard red"><span class="rk">A<i>♥</i></span><span class="st">♥</span><span class="rk rk-b">A<i>♥</i></span></div>
+      <div class="pcard black"><span class="rk">7<i>♠</i></span><span class="st">♠</span><span class="rk rk-b">7<i>♠</i></span></div>
+      <div class="pcard red"><span class="rk">K<i>♦</i></span><span class="st">♦</span><span class="rk rk-b">K<i>♦</i></span></div>
+      <div class="pcard joker"><span class="big">★</span><span class="lbl">JOLLY</span></div>
+    </div>
+    <p><strong>🃏 Jolly:</strong> vale 0 punti ma conta come carta diversa per il Filotto e non fa mai Doppione.</p>
   </div>
   <div class="rules-section">
-    <h4 style="color:var(--primary);">➕ Modificatori</h4>
-    <p><strong>+2/+4/+6/+8/+10:</strong> aggiunti sempre al punteggio. <strong>x2:</strong> raddoppia solo la somma dei numeri.</p>
+    <h4>🌟 Filotto</h4>
+    <p>Con <strong>7 carte di valore diverso</strong> davanti a te fai Filotto: la mano finisce subito per tutti e ottieni <strong>+15 punti</strong> bonus.</p>
   </div>
   <div class="rules-section">
-    <h4 style="color:#c084fc;">⚡ Carte Azione</h4>
-    <p>Vanno sempre all'avversario in automatico (nessuna scelta da fare). Restano visibili sul tavolo come promemoria, ma non contano mai nel punteggio.</p>
+    <h4>➕ Modificatori</h4>
+    <div class="rules-cards">
+      <div class="pcard mod"><span class="big">+4</span><span class="lbl">BONUS</span></div>
+      <div class="pcard mod"><span class="big">×2</span><span class="lbl">RADDOPPIA</span></div>
+    </div>
+    <p><strong>+2 / +4 / +6 / +8 / +10:</strong> punti fissi aggiunti alla mano. <strong>×2:</strong> raddoppia la somma delle carte (non i bonus fissi, non cumulabile).</p>
+  </div>
+  <div class="rules-section">
+    <h4>⚡ Carte potere</h4>
+    <p>Si risolvono da sole appena pescate, nessuna scelta da fare. Quelle "contro" colpiscono sempre l'avversario; se ha già chiuso la mano vengono scartate. Restano visibili sul tavolo ma non valgono punti.</p>
+    <div class="rules-cards">
+      <div class="pcard power pw-freeze"><span class="big">❄️</span><span class="lbl">GELO</span></div>
+      <div class="pcard power pw-draw3"><span class="big">🎲</span><span class="lbl">PESCA 3</span></div>
+      <div class="pcard power pw-swap"><span class="big">🔄</span><span class="lbl">SCAMBIO</span></div>
+      <div class="pcard power pw-shield"><span class="big">🛡️</span><span class="lbl">SALVAGENTE</span></div>
+      <div class="pcard power pw-peek"><span class="big">👁️</span><span class="lbl">SBIRCIA</span></div>
+      <div class="pcard power pw-bank"><span class="big">🏦</span><span class="lbl">BANCA</span></div>
+    </div>
     <ul>
-      <li><strong>FREEZE:</strong> chi la riceve è costretto a fare STAY subito, con il punteggio che ha in quel momento.</li>
-      <li><strong>FLIP THREE:</strong> chi la riceve deve pescare 3 carte di fila, rischiando il BUST tra una e l'altra.</li>
-      <li><strong>SECOND CHANCE:</strong> ti salva automaticamente da un BUST la prima volta, poi si scarta. Se ne hai già una, quella nuova passa all'avversario.</li>
+      <li><strong>❄️ GELO:</strong> l'avversario chiude subito la mano con i punti che ha.</li>
+      <li><strong>🎲 PESCA 3:</strong> l'avversario deve pescare 3 carte di fila, rischiando il Doppione a ogni carta.</li>
+      <li><strong>🔄 SCAMBIO:</strong> le carte valore dei due giocatori si scambiano (i modificatori restano).</li>
+      <li><strong>🛡️ SALVAGENTE:</strong> annulla il tuo primo Doppione, poi si scarta. Se ne hai già uno passa all'avversario.</li>
+      <li><strong>👁️ SBIRCIA:</strong> vedi la prossima carta del mazzo, solo tu, prima di decidere.</li>
+      <li><strong>🏦 BANCA:</strong> i punti che hai in quel momento sono al sicuro: li tieni anche se poi fai Doppione.</li>
     </ul>
   </div>
-  <button class="btn-main" style="width:100%; margin-top:6px;" onclick="document.getElementById('rules-modal').close()">Ho Capito!</button>
+  <button class="btn-main" style="width:100%; margin-top:6px;" onclick="closeDialog('rules-modal')">Ho capito!</button>
 </dialog>
 
-<!-- Settings Modal -->
 <dialog id="settings-modal">
   <div class="modal-header">
-    <span class="modal-title">⚙️ Opzioni & Chiave AI</span>
-    <button class="btn-sub" style="padding:4px 8px;" onclick="document.getElementById('settings-modal').close()">✕</button>
+    <span class="modal-title">⚙️ Opzioni</span>
+    <button class="btn-sub" style="padding:4px 8px;" onclick="closeDialog('settings-modal')">✕</button>
   </div>
   <div class="setup-group">
-    <label>Google Gemini API Key</label>
-    <input type="password" id="gemini-key-input" placeholder="Incolla chiave" onchange="saveGeminiKey(this.value)">
-    <span style="font-size:10.5px; color:var(--muted); display:block; margin-top:4px;">Serve solo per la difficoltà "AI Suprema". Rilevamento automatico del modello Flash più recente.</span>
-  </div>
-  <div class="setup-group">
-    <label>Suoni</label>
+    <label>Effetti sonori</label>
     <select id="sound-select" onchange="saveSoundSetting(this.value)">
       <option value="on">Attivi</option>
       <option value="off">Disattivati</option>
     </select>
   </div>
-  <div id="ai-test-result" style="font-size:11.5px; color:var(--muted); min-height:14px; margin-bottom:10px;"></div>
-  <div style="display:flex; gap:8px;">
-    <button class="btn-sub" style="flex:1;" onclick="testAiConnection()">Testa AI</button>
-    <button class="btn-main" style="flex:1; padding:10px;" onclick="document.getElementById('settings-modal').close()">Salva</button>
+  <div class="setup-group">
+    <label>Server per il gioco online</label>
+    <input type="text" id="server-url-input" placeholder="wss://il-tuo-server.example.com" onchange="saveServerUrl(this.value)" autocapitalize="off" autocorrect="off">
+    <span class="hint" id="server-url-hint"></span>
+    <span class="hint">Lascia vuoto se l'app è servita dallo stesso server di gioco (cartella <code>server/</code> del progetto).</span>
   </div>
+  <button class="btn-main" style="width:100%; padding:10px;" onclick="closeDialog('settings-modal')">Chiudi</button>
 </dialog>
 
-<!-- Stats Modal -->
 <dialog id="stats-modal">
   <div class="modal-header">
-    <span class="modal-title">📊 Statistiche & Storico</span>
-    <button class="btn-sub" style="padding:4px 8px;" onclick="document.getElementById('stats-modal').close()">✕</button>
+    <span class="modal-title">📊 Statistiche</span>
+    <button class="btn-sub" style="padding:4px 8px;" onclick="closeDialog('stats-modal')">✕</button>
   </div>
   <div id="stats-summary"></div>
-  <button class="btn-sub" style="width:100%; margin-top:4px;" onclick="resetStats()">Azzera Statistiche</button>
+  <button class="btn-sub" style="width:100%; margin-top:4px;" onclick="resetStats()">Azzera statistiche</button>
 </dialog>
 
-<!-- Round End Modal -->
 <dialog id="round-end-modal">
   <div class="modal-header">
-    <span class="modal-title" id="round-end-title">Fine Mano</span>
+    <span class="modal-title" id="round-end-title">Fine mano</span>
   </div>
   <div id="round-end-summary"></div>
-  <button class="btn-main" style="width:100%; margin-top:6px;" onclick="onNextRoundClick()">Prossima Mano →</button>
+  <button id="btn-next-round" class="btn-main" style="width:100%; margin-top:6px;" onclick="onNextRoundClick()">Prossima mano →</button>
 </dialog>
 
-<!-- Game End Modal -->
 <dialog id="game-end-modal">
   <div class="modal-header">
-    <span class="modal-title" id="game-end-title">🏆 Partita Finita</span>
+    <span class="modal-title" id="game-end-title">🏆 Partita finita</span>
   </div>
   <div id="game-end-summary"></div>
-  <button class="btn-main" style="width:100%; margin-top:6px;" onclick="onNewGameFromEndClick()">Nuova Partita</button>
-</dialog>
-
-<!-- Exit Confirmation Dialog -->
-<dialog id="exit-confirm-dialog">
-  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:#ef4444;">Abbandonare la partita?</h3>
-  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Tornando alla Home la partita in corso verrà interrotta e persa.</p>
-  <div style="display:flex; gap:8px;">
-    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('exit-confirm-dialog').close()">Annulla</button>
-    <button class="btn-main" style="flex:1; background:#dc2626; color:#fff;" onclick="document.getElementById('exit-confirm-dialog').close(); stopAmbientMusic(); navigateScreen('screen-home');">Esci</button>
+  <div style="display:flex; gap:8px; margin-top:6px;">
+    <button class="btn-sub" style="flex:1;" onclick="exitToHome()">Home</button>
+    <button id="btn-rematch" class="btn-main" style="flex:1;" onclick="onRematchClick()">Rivincita</button>
   </div>
 </dialog>
 
-<!-- Restart Confirmation Dialog -->
-<dialog id="restart-confirm-dialog">
-  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--primary);">Ricominciare la partita?</h3>
-  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Punteggi azzerati, si riparte dalla Mano 1.</p>
+<dialog id="exit-confirm-dialog">
+  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--red);">Abbandonare la partita?</h3>
+  <p style="font-size: 13px; color: #d5dbe8; text-align:center; margin-bottom: 16px;">Tornando alla Home la partita in corso verrà interrotta e persa.</p>
   <div style="display:flex; gap:8px;">
-    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('restart-confirm-dialog').close()">Annulla</button>
+    <button class="btn-sub" style="flex:1;" onclick="closeDialog('exit-confirm-dialog')">Annulla</button>
+    <button class="btn-main btn-danger" style="flex:1;" onclick="exitToHome()">Esci</button>
+  </div>
+</dialog>
+
+<dialog id="restart-confirm-dialog">
+  <h3 class="modal-title" style="margin-bottom: 8px; text-align:center;">Ricominciare la partita?</h3>
+  <p style="font-size: 13px; color: #d5dbe8; text-align:center; margin-bottom: 16px;">Punteggi azzerati, si riparte dalla mano 1.</p>
+  <div style="display:flex; gap:8px;">
+    <button class="btn-sub" style="flex:1;" onclick="closeDialog('restart-confirm-dialog')">Annulla</button>
     <button class="btn-main" style="flex:1;" onclick="confirmRestartMatch()">Ricomincia</button>
   </div>
 </dialog>
 
-<!-- Exit App Confirmation Dialog -->
 <dialog id="exit-app-confirm-dialog">
   <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--red);">Chiudere il gioco?</h3>
-  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">L'app verrà chiusa.</p>
+  <p style="font-size: 13px; color: #d5dbe8; text-align:center; margin-bottom: 16px;">L'app verrà chiusa.</p>
   <div style="display:flex; gap:8px;">
-    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('exit-app-confirm-dialog').close()">Annulla</button>
-    <button class="btn-main" style="flex:1; background:var(--red); color:#2b0a0a;" onclick="document.getElementById('exit-app-confirm-dialog').close(); window.close();">Chiudi</button>
+    <button class="btn-sub" style="flex:1;" onclick="closeDialog('exit-app-confirm-dialog')">Annulla</button>
+    <button class="btn-main btn-danger" style="flex:1;" onclick="closeDialog('exit-app-confirm-dialog'); window.close();">Chiudi</button>
   </div>
 </dialog>
 
-<!-- Reset Stats Confirmation Dialog -->
 <dialog id="reset-stats-confirm-dialog">
   <h3 class="modal-title" style="margin-bottom: 8px; text-align:center; color:var(--red);">Azzerare le statistiche?</h3>
-  <p style="font-size: 13px; color: #cfc7be; text-align:center; margin-bottom: 16px;">Tutti i dati di partite vinte/perse verranno cancellati per sempre.</p>
+  <p style="font-size: 13px; color: #d5dbe8; text-align:center; margin-bottom: 16px;">Tutti i dati di partite vinte/perse verranno cancellati per sempre.</p>
   <div style="display:flex; gap:8px;">
-    <button class="btn-sub" style="flex:1;" onclick="document.getElementById('reset-stats-confirm-dialog').close()">Annulla</button>
-    <button class="btn-main" style="flex:1; background:var(--red); color:#2b0a0a;" onclick="confirmResetStats()">Azzera</button>
+    <button class="btn-sub" style="flex:1;" onclick="closeDialog('reset-stats-confirm-dialog')">Annulla</button>
+    <button class="btn-main btn-danger" style="flex:1;" onclick="confirmResetStats()">Azzera</button>
   </div>
 </dialog>
 

@@ -1,57 +1,136 @@
 /**
- * Flip 7 - Vanilla JS game engine, probability-aware AI, Gemini integration, PWA logic.
+ * Filotto — gioco di carte "push your luck" con carte da Scala 40.
+ *
+ * Contenuto:
+ *  1. Costanti, impostazioni e stato
+ *  2. Mazzo e punteggi
+ *  3. Effetti sonori (solo brevi effetti, nessuna musica di fondo)
+ *  4. Flusso di gioco (motore: gira solo in locale o sull'host online)
+ *  5. CPU a tre livelli
+ *  6. Rendering
+ *  7. Navigazione e controlli
+ *  8. Multiplayer online (relay WebSocket, host autoritativo)
+ *  9. Statistiche
+ * 10. Opzioni, toast e messaggi di gioco
+ * 11. PWA (installazione, service worker, pull-to-refresh)
  */
+'use strict';
 
 /* =========================================================
-   1. STATE
+   1. COSTANTI, IMPOSTAZIONI E STATO
    ========================================================= */
-let state = {
-  drawPile: [],
-  discardPile: [],
-  usedCards: [],
-  players: [],
-  currentPlayerIndex: 0,
-  dealerIndex: 0,
-  roundNumber: 1,
-  phase: 'SETUP', // SETUP | PLAYER_TURN | AI_TURN | ROUND_END | GAME_END
-  winnerId: null,
-  mode: 'normal', // easy | normal | hard | gemini
-  p1Name: 'Giocatore',
-  discoveredFlashModels: [],
-  settings: { soundEnabled: true },
-  undoStack: [],
-  isAiBusy: false,
-  sequenceToken: 0
+const APP_NAME = 'Filotto';
+const LS = (key) => `filotto_${key}`;
+const TARGET_OPTIONS = [101, 201, 301, 401, 501];
+const DEFAULT_TARGET = 201;
+const FILOTTO_SIZE = 7;
+const FILOTTO_BONUS = 15;
+const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+const SUITS = ['♠', '♥', '♦', '♣'];
+const DRAW_PACE_MS = 600;
+const UNDO_LIMIT = 40;
+
+const POWER_INFO = {
+  FREEZE:     { icon: '❄️', label: 'GELO',       css: 'freeze' },
+  DRAW_THREE: { icon: '🎲', label: 'PESCA 3',    css: 'draw3' },
+  SHIELD:     { icon: '🛡️', label: 'SALVAGENTE', css: 'shield' },
+  PEEK:       { icon: '👁️', label: 'SBIRCIA',    css: 'peek' },
+  SWAP:       { icon: '🔄', label: 'SCAMBIO',    css: 'swap' },
+  BANK:       { icon: '🏦', label: 'BANCA',      css: 'bank' }
+};
+const POWER_COUNTS = { FREEZE: 3, DRAW_THREE: 3, SHIELD: 3, PEEK: 3, SWAP: 2, BANK: 3 };
+// Valore strategico stimato di ogni potere per la CPU (in "punti equivalenti").
+const POWER_EV = { FREEZE: 4, DRAW_THREE: 2, SHIELD: 4, PEEK: 2.5, SWAP: 0, BANK: 3 };
+
+const LEVEL_INFO = {
+  easy:   { label: 'Facile',    tag: 'Prudente',    cpuName: 'CPU Timido',    desc: 'Si ferma presto, non conta le carte e ogni tanto sbaglia mossa. Ideale per imparare.' },
+  normal: { label: 'Medio',     tag: 'Calcolatore', cpuName: 'CPU Contabile', desc: 'Calcola rischio e guadagno di ogni pescata sulle carte rimaste, ma ignora il tuo punteggio.' },
+  hard:   { label: 'Difficile', tag: 'Stratega',    cpuName: 'CPU Stratega',  desc: 'Conta le carte, sfrutta ogni potere e gioca in base al tuo punteggio e al traguardo.' },
+  online: { label: 'Online',    tag: 'Multiplayer', cpuName: '',              desc: '' }
 };
 
+const settings = {
+  soundEnabled: true,
+  serverUrl: '',
+  playerName: 'Giocatore',
+  level: 'normal',
+  target: DEFAULT_TARGET
+};
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(LS('settings'));
+    if (raw) Object.assign(settings, JSON.parse(raw));
+  } catch (e) { /* ignora */ }
+  if (!TARGET_OPTIONS.includes(settings.target)) settings.target = DEFAULT_TARGET;
+  if (!LEVEL_INFO[settings.level] || settings.level === 'online') settings.level = 'normal';
+  if (typeof settings.playerName !== 'string' || !settings.playerName.trim()) settings.playerName = 'Giocatore';
+}
+function saveSettings() {
+  try { localStorage.setItem(LS('settings'), JSON.stringify(settings)); } catch (e) { /* ignora */ }
+}
+
+function freshState() {
+  return {
+    drawPile: [],
+    discardPile: [],
+    usedCards: [],
+    players: [],
+    currentPlayerIndex: 0,
+    dealerIndex: 0,
+    roundNumber: 1,
+    phase: 'SETUP', // SETUP | TURN | ROUND_END | GAME_END
+    winnerId: null,
+    mode: 'normal', // easy | normal | hard | online
+    targetScore: DEFAULT_TARGET,
+    peek: null,          // { playerId, cardId }: la prossima carta del mazzo è nota a quel giocatore
+    localPlayerId: 'p1', // chi gioca su questo dispositivo (p1 = solo/host, p2 = ospite online)
+    config: null,        // configurazione dell'ultima partita (per la rivincita)
+    undoStack: [],
+    isCpuBusy: false,
+    forcedBusy: false,   // pescate forzate (Pesca 3) in corso: i pulsanti restano bloccati
+    remote: { deckCount: 0, peekCard: null } // specchio dei dati dell'host, usato solo dall'ospite
+  };
+}
+
+let state = freshState();
+let sequenceToken = 0;
 let deferredAndroidPrompt = null;
 
+function makePlayer(id, name, controller) {
+  return {
+    id, name, controller, // controller: 'local' | 'cpu' | 'remote'
+    score: 0, roundScore: 0, status: 'ACTIVE', // ACTIVE | STAYED | BUSTED | FROZEN | FILOTTO
+    valueCards: [], modifierCards: [], shieldCard: null, usedPowerCards: [], bustCard: null,
+    bankedScore: 0
+  };
+}
+
 /* =========================================================
-   2. DECK, SCORING & DECK UTILITIES
+   2. MAZZO E PUNTEGGI
    ========================================================= */
+function rankValue(rank) {
+  if (rank === 'A') return 1;
+  if (rank === 'J' || rank === 'Q' || rank === 'K') return 10;
+  return parseInt(rank, 10);
+}
+
+// 2 mazzi da Scala 40 (104 carte) + 4 jolly + 7 modificatori + 17 carte potere = 132 carte.
 function createDeck() {
   const deck = [];
-  let idCounter = 1;
-
-  for (let val = 0; val <= 12; val++) {
-    const copies = val === 0 ? 1 : val;
-    for (let c = 0; c < copies; c++) {
-      deck.push({ id: `n${val}-${c}-${idCounter++}`, type: 'NUMBER', value: val });
+  let n = 1;
+  for (let d = 0; d < 2; d++) {
+    for (const suit of SUITS) {
+      for (const rank of RANKS) deck.push({ id: `v${n++}`, type: 'VALUE', rank, suit, value: rankValue(rank) });
     }
   }
-
-  [2, 4, 6, 8, 10].forEach(v => {
-    deck.push({ id: `plus${v}-${idCounter++}`, type: 'MODIFIER', effect: 'PLUS', value: v });
+  for (let i = 0; i < 4; i++) deck.push({ id: `w${n++}`, type: 'VALUE', rank: '★', suit: '', value: 0, joker: true });
+  [2, 4, 6, 8, 10].forEach(v => deck.push({ id: `m${n++}`, type: 'MODIFIER', effect: 'PLUS', value: v }));
+  for (let i = 0; i < 2; i++) deck.push({ id: `m${n++}`, type: 'MODIFIER', effect: 'DOUBLE' });
+  Object.entries(POWER_COUNTS).forEach(([effect, count]) => {
+    for (let i = 0; i < count; i++) deck.push({ id: `p${n++}`, type: 'POWER', effect });
   });
-  deck.push({ id: `mult2-${idCounter++}`, type: 'MODIFIER', effect: 'MULTIPLIER_TWO' });
-
-  for (let i = 0; i < 3; i++) {
-    deck.push({ id: `freeze${i}-${idCounter++}`, type: 'ACTION', effect: 'FREEZE' });
-    deck.push({ id: `flip3-${i}-${idCounter++}`, type: 'ACTION', effect: 'FLIP_THREE' });
-    deck.push({ id: `sc${i}-${idCounter++}`, type: 'ACTION', effect: 'SECOND_CHANCE' });
-  }
-
-  return deck; // 79 number + 6 modifier + 9 action = 94 cards
+  return deck;
 }
 
 function shuffle(array) {
@@ -63,393 +142,293 @@ function shuffle(array) {
   return arr;
 }
 
-function calculateRoundScore(player) {
-  if (player.status === 'BUSTED') return { score: 0, isFlip7: false };
-
-  const uniqueNumbers = new Set();
-  let numberSum = 0;
-  for (const c of player.numberCards) {
-    uniqueNumbers.add(c.value);
-    numberSum += c.value;
+// Carte "diverse": ogni rango conta una volta sola, ogni jolly conta sempre come carta unica.
+function uniqueCount(player) {
+  const ranks = new Set();
+  let jokers = 0;
+  for (const c of player.valueCards) {
+    if (c.joker) jokers++; else ranks.add(c.rank);
   }
-
-  const isFlip7 = uniqueNumbers.size >= 7;
-  const hasMultiplierTwo = player.modifierCards.some(c => c.effect === 'MULTIPLIER_TWO');
-  const plusTotal = player.modifierCards.filter(c => c.effect === 'PLUS').reduce((s, c) => s + c.value, 0);
-
-  let baseScore = numberSum;
-  if (hasMultiplierTwo) baseScore *= 2;
-
-  let total = baseScore + plusTotal;
-  if (isFlip7) total += 15;
-
-  return { score: total, isFlip7 };
+  return ranks.size + jokers;
 }
 
-function countUniqueNumbers(player) {
-  const set = new Set();
-  for (const c of player.numberCards) set.add(c.value);
-  return set.size;
+function sumValues(player) {
+  return player.valueCards.reduce((s, c) => s + c.value, 0);
+}
+
+function calculateRoundScore(player) {
+  if (player.status === 'BUSTED') return { score: player.bankedScore || 0, isFilotto: false };
+  const isFilotto = uniqueCount(player) >= FILOTTO_SIZE;
+  const hasDouble = player.modifierCards.some(c => c.effect === 'DOUBLE');
+  const plusTotal = player.modifierCards.filter(c => c.effect === 'PLUS').reduce((s, c) => s + c.value, 0);
+  let total = sumValues(player) * (hasDouble ? 2 : 1) + plusTotal;
+  if (isFilotto) total += FILOTTO_BONUS;
+  return { score: total, isFilotto };
 }
 
 function rebuildDeckIfNeeded() {
   if (state.drawPile.length > 0) return;
-
-  const activeTableCards = new Set();
+  const onTable = new Set();
   for (const p of state.players) {
-    for (const c of p.numberCards) activeTableCards.add(c.id);
-    for (const c of p.modifierCards) activeTableCards.add(c.id);
-    if (p.secondChanceCard) activeTableCards.add(p.secondChanceCard.id);
-    for (const c of p.usedActionCards) activeTableCards.add(c.id);
-    if (p.bustCard) activeTableCards.add(p.bustCard.id);
+    p.valueCards.forEach(c => onTable.add(c.id));
+    p.modifierCards.forEach(c => onTable.add(c.id));
+    p.usedPowerCards.forEach(c => onTable.add(c.id));
+    if (p.shieldCard) onTable.add(p.shieldCard.id);
+    if (p.bustCard) onTable.add(p.bustCard.id);
   }
-
-  const cardsToShuffle = [...state.discardPile, ...state.usedCards].filter(c => !activeTableCards.has(c.id));
-  state.drawPile = shuffle(cardsToShuffle);
+  const toShuffle = [...state.discardPile, ...state.usedCards].filter(c => !onTable.has(c.id));
+  state.drawPile = shuffle(toShuffle);
   state.discardPile = [];
-  state.usedCards = state.usedCards.filter(c => activeTableCards.has(c.id));
+  state.usedCards = state.usedCards.filter(c => onTable.has(c.id));
+}
+
+function deckCount() {
+  return isGuest() ? state.remote.deckCount : state.drawPile.length;
+}
+
+// La carta in cima al mazzo, se il giocatore indicato l'ha sbirciata ed è ancora lì.
+function peekCardFor(playerId) {
+  if (isGuest()) return playerId === state.localPlayerId ? state.remote.peekCard : null;
+  if (!state.peek || state.peek.playerId !== playerId) return null;
+  const top = state.drawPile[0];
+  return top && top.id === state.peek.cardId ? top : null;
+}
+
+function cardCausesBust(player, card) {
+  return card.type === 'VALUE' && !card.joker && player.valueCards.some(c => !c.joker && c.rank === card.rank);
 }
 
 /* =========================================================
-   3. AUDIO (ambient music + short effects on separate gain nodes, so a HIT/STAY
-      blip never cuts off the music, and toggling sound fades things out cleanly
-      instead of hard-stopping mid-note)
+   3. EFFETTI SONORI (brevi, sintetizzati: niente musica di fondo)
    ========================================================= */
 let audioCtx = null;
-let musicNodes = null;
 
 function initAudio() {
   if (!audioCtx) {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) audioCtx = new AudioContextClass();
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) audioCtx = new Ctx();
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
 }
 
-function startAmbientMusic() {
-  if (!state.settings.soundEnabled) return;
+function tone(type, freqFrom, freqTo, duration, volume, startAt) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  const t = startAt !== undefined ? startAt : audioCtx.currentTime;
+  osc.type = type;
+  osc.frequency.setValueAtTime(freqFrom, t);
+  if (freqTo && freqTo !== freqFrom) osc.frequency.exponentialRampToValueAtTime(freqTo, t + duration);
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(volume, t + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + duration + 0.02);
+}
+
+function playSfxLocal(name) {
+  if (!settings.soundEnabled) return;
   initAudio();
-  if (!audioCtx || musicNodes) return;
-
+  if (!audioCtx) return;
   try {
-    const master = audioCtx.createGain();
-    master.gain.setValueAtTime(0, audioCtx.currentTime);
-    master.gain.linearRampToValueAtTime(0.032, audioCtx.currentTime + 2);
-    master.connect(audioCtx.destination);
-
-    const filter = audioCtx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 2200;
-    filter.Q.value = 0.4;
-    filter.connect(master);
-
-    // Bright, gentle major triad (C4-E4-G4) instead of a low drone — a light, airy pad.
-    const oscillators = [261.63, 329.63, 392.0].map((f, i) => {
-      const osc = audioCtx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = f;
-      const oGain = audioCtx.createGain();
-      oGain.gain.value = i === 0 ? 0.55 : 0.3;
-      osc.connect(oGain);
-      oGain.connect(filter);
-      osc.start();
-      return osc;
-    });
-
-    const lfo = audioCtx.createOscillator();
-    lfo.frequency.value = 0.045;
-    const lfoGain = audioCtx.createGain();
-    lfoGain.gain.value = 320;
-    lfo.connect(lfoGain);
-    lfoGain.connect(filter.frequency);
-    lfo.start();
-
-    musicNodes = { oscillators, master, lfo };
+    const now = audioCtx.currentTime;
+    switch (name) {
+      case 'draw': tone('triangle', 520, 720, 0.12, 0.12); break;
+      case 'stay': tone('sine', 392, 392, 0.12, 0.13); tone('sine', 523.25, 523.25, 0.3, 0.13, now + 0.1); break;
+      case 'bust': tone('sawtooth', 220, 50, 0.5, 0.25); break;
+      case 'power': tone('square', 660, 880, 0.08, 0.06); tone('square', 880, 1100, 0.12, 0.06, now + 0.08); break;
+      case 'win': [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone('triangle', f, f, 0.4, 0.15, now + i * 0.09)); break;
+      default: break;
+    }
   } catch (e) { /* audio best-effort */ }
 }
 
-function stopAmbientMusic() {
-  if (!musicNodes || !audioCtx) return;
-  const { oscillators, master, lfo } = musicNodes;
-  try {
-    const now = audioCtx.currentTime;
-    master.gain.cancelScheduledValues(now);
-    master.gain.setValueAtTime(master.gain.value, now);
-    master.gain.linearRampToValueAtTime(0, now + 0.6);
-    setTimeout(() => {
-      oscillators.forEach(o => { try { o.stop(); } catch (e) {} });
-      try { lfo.stop(); } catch (e) {}
-    }, 700);
-  } catch (e) { /* best-effort */ }
-  musicNodes = null;
-}
-
-function playBustSound() {
-  if (!state.settings.soundEnabled) return;
-  initAudio();
-  if (!audioCtx) return;
-  try {
-    const now = audioCtx.currentTime;
-    const osc1 = audioCtx.createOscillator();
-    const gain1 = audioCtx.createGain();
-    osc1.type = 'sawtooth';
-    osc1.frequency.setValueAtTime(220, now);
-    osc1.frequency.exponentialRampToValueAtTime(50, now + 0.5);
-    gain1.gain.setValueAtTime(0.3, now);
-    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-    osc1.connect(gain1);
-    gain1.connect(audioCtx.destination);
-    osc1.start(now);
-    osc1.stop(now + 0.5);
-  } catch (e) { /* audio best-effort */ }
-}
-
-function playDrawSound() {
-  if (!state.settings.soundEnabled) return;
-  initAudio();
-  if (!audioCtx) return;
-  try {
-    const now = audioCtx.currentTime;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(520, now);
-    osc.frequency.exponentialRampToValueAtTime(720, now + 0.08);
-    gain.gain.setValueAtTime(0.12, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start(now);
-    osc.stop(now + 0.13);
-  } catch (e) { /* best-effort */ }
-}
-
-function playStaySound() {
-  if (!state.settings.soundEnabled) return;
-  initAudio();
-  if (!audioCtx) return;
-  try {
-    const now = audioCtx.currentTime;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(392, now);
-    osc.frequency.setValueAtTime(523.25, now + 0.09);
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start(now);
-    osc.stop(now + 0.36);
-  } catch (e) { /* best-effort */ }
-}
-
-function playWinSound() {
-  if (!state.settings.soundEnabled) return;
-  initAudio();
-  if (!audioCtx) return;
-  try {
-    const now = audioCtx.currentTime;
-    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.value = f;
-      const t = now + i * 0.09;
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.16, t + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start(t);
-      osc.stop(t + 0.42);
-    });
-  } catch (e) { /* best-effort */ }
+// Suona in locale e, se siamo l'host di una partita online, fa suonare anche l'ospite.
+function sfx(name) {
+  playSfxLocal(name);
+  if (isHost()) relay({ k: 'sfx', name });
 }
 
 /* =========================================================
-   4. GAME FLOW
+   4. FLUSSO DI GIOCO (motore: locale o host online)
    ========================================================= */
-function startNewGame() {
+function bumpSequence() { sequenceToken++; return sequenceToken; }
+function isStale(token) { return token !== sequenceToken; }
+
+function localPlayer() { return state.players.find(p => p.id === state.localPlayerId) || null; }
+function getOpponent(player) { return state.players.find(p => p.id !== player.id) || null; }
+function currentPlayer() { return state.players[state.currentPlayerIndex] || null; }
+
+// config: { mode, targetScore, players: [{ id, name, controller }] }
+function startNewGame(config) {
   initAudio();
-  state.p1Name = document.getElementById('p1-name-input').value.trim() || 'Giocatore';
-  state.mode = document.getElementById('difficulty-select').value;
-  saveProfile();
-
+  bumpSequence();
+  const keepRemote = state.remote;
+  state = freshState();
+  state.remote = keepRemote;
+  state.config = config;
+  state.mode = config.mode;
+  state.targetScore = TARGET_OPTIONS.includes(config.targetScore) ? config.targetScore : DEFAULT_TARGET;
+  state.localPlayerId = 'p1';
+  state.players = config.players.map(p => makePlayer(p.id, p.name, p.controller));
   state.drawPile = shuffle(createDeck());
-  state.discardPile = [];
-  state.usedCards = [];
-  state.players = [
-    { id: 'player-human', name: state.p1Name, isHuman: true, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [], bustCard: null },
-    { id: 'player-ai', name: 'CPU', isHuman: false, score: 0, roundScore: 0, status: 'ACTIVE', numberCards: [], modifierCards: [], secondChanceCard: undefined, usedActionCards: [], bustCard: null }
-  ];
-  state.currentPlayerIndex = 0;
-  state.dealerIndex = 0;
-  state.roundNumber = 1;
-  state.phase = 'SETUP';
-  state.winnerId = null;
-  state.undoStack = [];
-  state.isAiBusy = false;
-  bumpSequence(); // invalidate anything still scheduled from a previous game
-
+  closeAllDialogs();
   navigateScreen('screen-game');
-  startAmbientMusic();
   startRound();
 }
 
-// Each round starts with everyone at 0 cards — there is no automatic "opening deal".
-// The player after the dealer simply takes the first normal turn (Hit or Stay), exactly
-// like every other turn in the round.
+function startSoloGame() {
+  const name = readNameInput('p1-name-input');
+  settings.playerName = name;
+  saveSettings();
+  const level = settings.level;
+  startNewGame({
+    mode: level,
+    targetScore: settings.target,
+    players: [
+      { id: 'p1', name, controller: 'local' },
+      { id: 'p2', name: LEVEL_INFO[level].cpuName, controller: 'cpu' }
+    ]
+  });
+}
+
 function startRound() {
-  bumpSequence(); // invalidate anything still scheduled from the previous hand
-  state.isAiBusy = false;
-  setAiThinking(false);
+  bumpSequence();
+  state.isCpuBusy = false;
+  state.forcedBusy = false;
+  state.peek = null;
+  setThinking(false);
   state.players.forEach(p => {
     p.roundScore = 0;
     p.status = 'ACTIVE';
-    p.numberCards = [];
+    p.valueCards = [];
     p.modifierCards = [];
-    p.secondChanceCard = undefined;
-    p.usedActionCards = [];
+    p.shieldCard = null;
+    p.usedPowerCards = [];
     p.bustCard = null;
+    p.bankedScore = 0;
   });
-
   state.discardPile = [...state.discardPile, ...state.usedCards];
   state.usedCards = [];
   state.undoStack = [];
-
   rebuildDeckIfNeeded();
 
   state.currentPlayerIndex = (state.dealerIndex + 1) % state.players.length;
-  const firstPlayer = state.players[state.currentPlayerIndex];
-  state.phase = firstPlayer.isHuman ? 'PLAYER_TURN' : 'AI_TURN';
+  state.phase = 'TURN';
+  afterTurnChange();
+}
 
+function afterTurnChange() {
   renderGame();
-  triggerAITurnIfNeeded();
+  triggerCpuTurnIfNeeded();
 }
 
-function getOpponent(player) {
-  return state.players.find(p => p.id !== player.id);
+function finishHandBecauseDeckIsEmpty() {
+  showGameMessage('🂠 Mazzo esaurito: la mano finisce qui.');
+  state.players.forEach(p => {
+    if (p.status === 'ACTIVE') {
+      p.status = 'STAYED';
+      p.roundScore = calculateRoundScore(p).score;
+    }
+  });
+  endRound();
 }
 
-// Every scheduled continuation (paced forced draws, AI "thinking" delays) captures the
-// sequence token that was current when it was scheduled. Undo / restart / new game bump
-// the token, so any callback still in flight from the old timeline sees a stale token and
-// aborts instead of mutating freshly restored state.
-function bumpSequence() {
-  state.sequenceToken++;
-  return state.sequenceToken;
-}
-function isStale(token) {
-  return token !== state.sequenceToken;
+function takeTopCard() {
+  const card = state.drawPile.shift();
+  state.usedCards.push(card);
+  if (state.peek && state.peek.cardId === card.id) state.peek = null;
+  return card;
 }
 
 function drawCard(playerIndex) {
   const player = state.players[playerIndex];
-  if (player.status !== 'ACTIVE') return;
+  if (!player || player.status !== 'ACTIVE') return;
 
   rebuildDeckIfNeeded();
-  if (state.drawPile.length === 0) {
-    // Deck genuinely exhausted (everything still on the table): nobody can draw, so the
-    // hand ends here rather than leaving the turn hanging with nothing to do.
-    showGameMessage('🂠 Mazzo esaurito: la mano finisce qui.');
-    state.players.forEach(p => {
-      if (p.status === 'ACTIVE') {
-        p.status = 'STAYED';
-        p.roundScore = calculateRoundScore(p).score;
-      }
-    });
-    endRound();
-    return;
-  }
+  if (state.drawPile.length === 0) { finishHandBecauseDeckIsEmpty(); return; }
 
   snapshotForUndo();
-  playDrawSound();
-  const card = state.drawPile.shift();
-  state.usedCards.push(card);
-
+  sfx('draw');
+  const card = takeTopCard();
   const extraDraws = applyCardEffect(playerIndex, card);
 
-  if (player.status === 'FLIP_7') { endRoundImmediatelyOnFlip7(playerIndex); return; }
+  if (player.status === 'FILOTTO') { endRound(); return; }
   if (player.status === 'BUSTED') { checkTurnOrRoundEnd(); return; }
 
   if (extraDraws.length > 0) {
-    // Drew a Flip Three — it doesn't end your own turn, you continue afterward.
-    const token = state.sequenceToken;
+    // Pesca 3 all'avversario: il turno torna a chi l'ha pescata quando le pescate forzate finiscono.
+    state.forcedBusy = true;
+    const token = sequenceToken;
     renderGame();
     setTimeout(() => {
       if (isStale(token)) return;
       processForcedDrawQueue(extraDraws, player.id, token);
-    }, 550);
+    }, DRAW_PACE_MS);
+  } else if (card.type === 'POWER' && card.effect === 'PEEK' && state.peek && state.peek.playerId === player.id) {
+    // Sbircia: il turno non passa, chi l'ha pescata decide subito sapendo cosa c'è in cima al mazzo.
+    afterTurnChange();
   } else {
     checkTurnOrRoundEnd();
   }
 }
 
-function opponentLabel() {
-  return state.mode === 'gemini' ? 'IA' : 'CPU';
-}
-
 function snapshotForUndo() {
+  if (state.mode === 'online') return;
   state.undoStack.push({
     players: JSON.parse(JSON.stringify(state.players)),
     drawPile: state.drawPile.slice(),
     discardPile: state.discardPile.slice(),
     usedCards: state.usedCards.slice(),
+    peek: state.peek ? { ...state.peek } : null,
     currentPlayerIndex: state.currentPlayerIndex,
     dealerIndex: state.dealerIndex,
     roundNumber: state.roundNumber,
     phase: state.phase
   });
-  if (state.undoStack.length > 40) state.undoStack.shift();
+  if (state.undoStack.length > UNDO_LIMIT) state.undoStack.shift();
 }
 
-function modifierLabel(card) {
-  return card.effect === 'MULTIPLIER_TWO' ? 'x2' : `+${card.value}`;
-}
-
-// Applies a card's immediate effect to a player and shows an explanatory message.
-// Returns an array of target indices still owed a forced draw — empty for everything
-// except Flip Three, which owes its target 3 draws. Never decides what happens to the
-// turn afterward; callers (drawCard / processForcedDrawQueue) handle that, since the
-// same logic is shared between a normal draw and a forced one.
+// Applica l'effetto immediato di una carta e mostra un messaggio. Restituisce gli indici dei
+// giocatori a cui è dovuta una pescata forzata (solo PESCA 3). Non decide mai cosa succede
+// al turno dopo: ci pensano drawCard / processForcedDrawQueue.
 //
-// Freeze and Flip Three are never a choice: per the rules they go to "any player,
-// including yourself", but giving a penalty card to yourself is never useful, so they
-// always go to the opponent automatically — the only exception is when the opponent is
-// no longer active, in which case there's nobody else to give it to.
+// Le carte penalità (GELO, PESCA 3, SCAMBIO) non si scelgono: vanno sempre all'avversario.
+// Se l'avversario non è più attivo non c'è nessuno da colpire e la carta viene scartata.
 function applyCardEffect(playerIndex, card) {
   const player = state.players[playerIndex];
-  const whoName = player.isHuman ? state.p1Name : opponentLabel();
+  const who = player.name;
+  const opponent = getOpponent(player);
+  const oppActive = opponent && opponent.status === 'ACTIVE';
 
-  if (card.type === 'NUMBER') {
-    const hasDuplicate = player.numberCards.some(c => c.value === card.value);
-
-    if (hasDuplicate) {
-      if (player.secondChanceCard) {
-        showGameMessage(`🛡️ ${whoName} pesca un altro ${card.value} ma si salva con Second Chance!`);
-        state.discardPile.push(card, player.secondChanceCard);
-        player.secondChanceCard = undefined;
+  if (card.type === 'VALUE') {
+    if (cardCausesBust(player, card)) {
+      if (player.shieldCard) {
+        showGameMessage(`🛡️ ${who} pesca un altro ${card.rank} ma il Salvagente lo salva dal Doppione!`);
+        state.discardPile.push(card, player.shieldCard);
+        player.shieldCard = null;
+        sfx('power');
       } else {
-        playBustSound();
-        // Keep the duplicate card visible next to the original so it's clear why it's a bust.
-        player.bustCard = card;
-        showGameMessage(`💥 ${whoName} pesca un altro ${card.value}: BUST! Mano azzerata.`);
+        sfx('bust');
+        player.bustCard = card; // resta visibile accanto all'originale, così è chiaro perché è un Doppione
         player.status = 'BUSTED';
-        player.roundScore = 0;
+        player.roundScore = player.bankedScore || 0;
+        showGameMessage(player.bankedScore > 0
+          ? `💥 ${who} pesca un altro ${card.rank}: DOPPIONE! Tiene solo i ${player.bankedScore} punti in Banca.`
+          : `💥 ${who} pesca un altro ${card.rank}: DOPPIONE! Mano azzerata.`);
       }
       return [];
     }
-
-    player.numberCards.push(card);
+    player.valueCards.push(card);
     const res = calculateRoundScore(player);
-    if (res.isFlip7) {
-      showGameMessage(`🎉 FLIP 7! ${whoName} ha 7 numeri diversi: +15 punti bonus!`);
-      playWinSound();
-      player.status = 'FLIP_7';
-      player.roundScore = res.score;
-    } else {
-      player.roundScore = res.score;
+    player.roundScore = res.score;
+    if (res.isFilotto) {
+      showGameMessage(`🌟 FILOTTO! ${who} ha ${FILOTTO_SIZE} carte diverse: +${FILOTTO_BONUS} punti e mano chiusa!`);
+      sfx('win');
+      player.status = 'FILOTTO';
+    } else if (card.joker) {
+      showGameMessage(`🃏 ${who} pesca un JOLLY: vale 0 ma conta come carta diversa e non fa mai Doppione.`);
     }
     return [];
   }
@@ -457,202 +436,197 @@ function applyCardEffect(playerIndex, card) {
   if (card.type === 'MODIFIER') {
     player.modifierCards.push(card);
     player.roundScore = calculateRoundScore(player).score;
-    const explain = card.effect === 'MULTIPLIER_TWO' ? 'raddoppia la somma dei numeri' : `aggiunge ${card.value} punti fissi`;
-    showGameMessage(`➕ ${whoName} pesca ${modifierLabel(card)}: ${explain}.`);
+    sfx('power');
+    if (card.effect === 'DOUBLE') {
+      showGameMessage(player.modifierCards.filter(c => c.effect === 'DOUBLE').length > 1
+        ? `✖️ ${who} pesca un altro ×2: il raddoppio non si cumula, la carta non aggiunge nulla.`
+        : `✖️ ${who} pesca ×2: raddoppia la somma delle carte.`);
+    } else {
+      showGameMessage(`➕ ${who} pesca +${card.value}: ${card.value} punti fissi in più.`);
+    }
     return [];
   }
 
-  if (card.type === 'ACTION') {
-    if (card.effect === 'SECOND_CHANCE') {
-      if (!player.secondChanceCard) {
-        player.secondChanceCard = card;
-        showGameMessage(`🛡️ ${whoName} pesca Second Chance: salva da un BUST, poi si scarta.`);
+  // POWER
+  sfx('power');
+  switch (card.effect) {
+    case 'SHIELD': {
+      if (!player.shieldCard) {
+        player.shieldCard = card;
+        showGameMessage(`🛡️ ${who} pesca il Salvagente: annulla un Doppione, poi si scarta.`);
+      } else if (oppActive && !opponent.shieldCard) {
+        opponent.shieldCard = card;
+        showGameMessage(`🛡️ ${who} ne aveva già uno: il Salvagente passa a ${opponent.name}.`);
       } else {
-        const recipient = state.players.find((p, idx) => idx !== playerIndex && !p.secondChanceCard && p.status === 'ACTIVE');
-        if (recipient) {
-          recipient.secondChanceCard = card;
-          showGameMessage(`🛡️ Second Chance passata a ${recipient.isHuman ? state.p1Name : opponentLabel()} (${whoName} ne aveva già una).`);
-        } else {
-          state.discardPile.push(card);
-          showGameMessage(`🛡️ ${whoName} pesca Second Chance, ma non c'è nessuno a cui darla: scartata.`);
-        }
+        state.discardPile.push(card);
+        showGameMessage(`🛡️ ${who} pesca un Salvagente ma nessuno può prenderlo: scartato.`);
       }
       return [];
     }
-
-    // Penalty cards always go to the opponent. If the opponent isn't active anymore
-    // there's nobody to penalise — the card is simply discarded with no effect
-    // (never turned back on the player who drew it).
-    if (card.effect === 'FREEZE') {
-      const opponent = getOpponent(player);
-      if (!opponent || opponent.status !== 'ACTIVE') {
+    case 'FREEZE': {
+      if (!oppActive) {
         state.discardPile.push(card);
-        showGameMessage(`❄️ ${whoName} pesca FREEZE, ma non c'è nessun avversario attivo: scartata.`);
+        showGameMessage(`❄️ ${who} pesca GELO, ma l'avversario ha già chiuso: scartata.`);
         return [];
       }
-      player.usedActionCards.push(card);
-      const targetName = opponent.isHuman ? state.p1Name : opponentLabel();
-      showGameMessage(`❄️ ${whoName} pesca FREEZE: ${targetName} si ferma con il punteggio attuale.`);
-      opponent.status = 'FREEZED';
+      player.usedPowerCards.push(card);
+      opponent.status = 'FROZEN';
       opponent.roundScore = calculateRoundScore(opponent).score;
+      showGameMessage(`❄️ ${who} pesca GELO: ${opponent.name} è congelato e chiude la mano con ${opponent.roundScore} punti.`);
       return [];
     }
-
-    if (card.effect === 'FLIP_THREE') {
-      const opponent = getOpponent(player);
-      if (!opponent || opponent.status !== 'ACTIVE') {
+    case 'DRAW_THREE': {
+      if (!oppActive) {
         state.discardPile.push(card);
-        showGameMessage(`🎲 ${whoName} pesca FLIP THREE, ma non c'è nessun avversario attivo: scartata.`);
+        showGameMessage(`🎲 ${who} pesca PESCA 3, ma l'avversario ha già chiuso: scartata.`);
         return [];
       }
-      player.usedActionCards.push(card);
-      const targetName = opponent.isHuman ? state.p1Name : opponentLabel();
-      showGameMessage(`🎲 ${whoName} pesca FLIP THREE: ${targetName} pesca 3 carte di fila!`);
+      player.usedPowerCards.push(card);
+      showGameMessage(`🎲 ${who} pesca PESCA 3: ${opponent.name} deve pescare 3 carte di fila!`);
       const targetIdx = state.players.findIndex(p => p.id === opponent.id);
       return [targetIdx, targetIdx, targetIdx];
     }
+    case 'PEEK': {
+      player.usedPowerCards.push(card);
+      rebuildDeckIfNeeded();
+      if (state.drawPile.length > 0) {
+        state.peek = { playerId: player.id, cardId: state.drawPile[0].id };
+        showGameMessage(player.controller === 'local'
+          ? '👁️ SBIRCIA: la prossima carta del mazzo è scoperta solo per te.'
+          : `👁️ ${who} pesca SBIRCIA e guarda la prossima carta del mazzo.`);
+      } else {
+        showGameMessage(`👁️ ${who} pesca SBIRCIA, ma il mazzo è vuoto.`);
+      }
+      return [];
+    }
+    case 'SWAP': {
+      if (!oppActive) {
+        state.discardPile.push(card);
+        showGameMessage(`🔄 ${who} pesca SCAMBIO, ma l'avversario ha già chiuso: scartata.`);
+        return [];
+      }
+      player.usedPowerCards.push(card);
+      const mine = player.valueCards;
+      player.valueCards = opponent.valueCards;
+      opponent.valueCards = mine;
+      player.roundScore = calculateRoundScore(player).score;
+      opponent.roundScore = calculateRoundScore(opponent).score;
+      showGameMessage(`🔄 ${who} pesca SCAMBIO: le carte valore passano di mano tra i due giocatori!`);
+      return [];
+    }
+    case 'BANK': {
+      player.usedPowerCards.push(card);
+      const safe = calculateRoundScore(player).score;
+      player.bankedScore = Math.max(player.bankedScore || 0, safe);
+      showGameMessage(safe > 0
+        ? `🏦 ${who} pesca BANCA: ${safe} punti al sicuro anche in caso di Doppione.`
+        : `🏦 ${who} pesca BANCA, ma non ha ancora punti da mettere al sicuro.`);
+      return [];
+    }
+    default:
+      state.discardPile.push(card);
+      return [];
   }
-  return [];
 }
 
 function returnTurnToSource(sourcePlayer) {
+  state.forcedBusy = false;
   if (sourcePlayer.status !== 'ACTIVE') { checkTurnOrRoundEnd(); return; }
   state.currentPlayerIndex = state.players.findIndex(p => p.id === sourcePlayer.id);
-  state.phase = sourcePlayer.isHuman ? 'PLAYER_TURN' : 'AI_TURN';
-  renderGame();
-  triggerAITurnIfNeeded();
+  state.phase = 'TURN';
+  afterTurnChange();
 }
 
-// Processes one forced draw at a time (paced 550ms apart). If a forced draw is itself a
-// Flip Three, its 3 draws are inserted at the FRONT of the queue so they resolve before
-// continuing whatever was left — this naturally handles a Flip Three nested inside
-// another one, however deep, without any separate pause/resume bookkeeping. Any queued
-// draw for a player who busted (or was otherwise deactivated) along the way is simply
-// skipped rather than aborting the whole queue, so unrelated remaining draws still happen.
+// Una pescata forzata alla volta. Se una pescata forzata è a sua volta una PESCA 3, le sue 3
+// pescate vengono messe in testa alla coda, così un annidamento a qualsiasi profondità si
+// risolve da solo. Le pescate dovute a un giocatore non più attivo vengono semplicemente saltate.
 function processForcedDrawQueue(queue, returnToPlayerId, token) {
-  if (token !== undefined && isStale(token)) return;
-
+  if (isStale(token)) return;
   const remaining = queue.filter(idx => state.players[idx].status === 'ACTIVE');
 
   if (remaining.length === 0) {
-    const sourcePlayer = returnToPlayerId ? state.players.find(p => p.id === returnToPlayerId) : null;
-    if (sourcePlayer && sourcePlayer.status === 'ACTIVE') returnTurnToSource(sourcePlayer);
-    else checkTurnOrRoundEnd();
+    const source = state.players.find(p => p.id === returnToPlayerId);
+    if (source) returnTurnToSource(source);
+    else { state.forcedBusy = false; checkTurnOrRoundEnd(); }
     return;
   }
 
   const targetIdx = remaining[0];
   const rest = remaining.slice(1);
-  const targetPlayer = state.players[targetIdx];
+  const target = state.players[targetIdx];
 
   rebuildDeckIfNeeded();
-  if (state.drawPile.length === 0) {
-    // Nothing left to draw: abandon the remaining forced draws and settle the hand
-    // rather than leaving the sequence (and the turn) hanging.
-    showGameMessage('🂠 Mazzo esaurito: la mano finisce qui.');
-    state.players.forEach(p => {
-      if (p.status === 'ACTIVE') {
-        p.status = 'STAYED';
-        p.roundScore = calculateRoundScore(p).score;
-      }
-    });
-    endRound();
-    return;
-  }
+  if (state.drawPile.length === 0) { state.forcedBusy = false; finishHandBecauseDeckIsEmpty(); return; }
 
-  const card = state.drawPile.shift();
-  state.usedCards.push(card);
+  sfx('draw');
+  const card = takeTopCard();
   const extraDraws = applyCardEffect(targetIdx, card);
-
-  if (targetPlayer.status === 'FLIP_7') { endRoundImmediatelyOnFlip7(targetIdx); return; }
+  if (target.status === 'FILOTTO') { state.forcedBusy = false; endRound(); return; }
 
   renderGame();
   const nextQueue = extraDraws.concat(rest);
-  const myToken = token !== undefined ? token : state.sequenceToken;
   setTimeout(() => {
-    if (isStale(myToken)) return;
-    processForcedDrawQueue(nextQueue, returnToPlayerId, myToken);
-  }, 550);
+    if (isStale(token)) return;
+    processForcedDrawQueue(nextQueue, returnToPlayerId, token);
+  }, DRAW_PACE_MS);
 }
 
 function playerStay(playerIndex) {
   const player = state.players[playerIndex];
-  if (player.status !== 'ACTIVE') return;
+  if (!player || player.status !== 'ACTIVE') return;
   snapshotForUndo();
-  playStaySound();
+  sfx('stay');
   player.status = 'STAYED';
   player.roundScore = calculateRoundScore(player).score;
+  showGameMessage(`✋ ${player.name} si ferma con ${player.roundScore} punti.`);
   checkTurnOrRoundEnd();
 }
 
 function checkTurnOrRoundEnd() {
-  const activePlayers = state.players.filter(p => p.status === 'ACTIVE');
-  if (activePlayers.length === 0) { endRound(); return; }
+  state.forcedBusy = false;
+  const active = state.players.filter(p => p.status === 'ACTIVE');
+  if (active.length === 0) { endRound(); return; }
 
-  let nextIdx = (state.currentPlayerIndex + 1) % state.players.length;
+  let next = (state.currentPlayerIndex + 1) % state.players.length;
   let guard = 0;
-  while (state.players[nextIdx].status !== 'ACTIVE' && guard < state.players.length) {
-    nextIdx = (nextIdx + 1) % state.players.length;
+  while (state.players[next].status !== 'ACTIVE' && guard < state.players.length) {
+    next = (next + 1) % state.players.length;
     guard++;
   }
-  state.currentPlayerIndex = nextIdx;
-  const nextPlayer = state.players[nextIdx];
-  state.phase = nextPlayer.isHuman ? 'PLAYER_TURN' : 'AI_TURN';
-
-  renderGame();
-  triggerAITurnIfNeeded();
-}
-
-function endRoundImmediatelyOnFlip7(winnerIdx) {
-  const gains = {};
-  state.players.forEach((p, idx) => {
-    if (idx === winnerIdx) { p.score += p.roundScore; gains[p.id] = p.roundScore; }
-    else if (p.status === 'BUSTED') { p.roundScore = 0; gains[p.id] = 0; }
-    else {
-      const res = calculateRoundScore(p);
-      p.roundScore = res.score;
-      p.score += res.score;
-      gains[p.id] = res.score;
-    }
-  });
-
-  state.phase = 'ROUND_END';
-  renderGame();
-  if (!checkGameOver()) showRoundEndModal(gains);
+  state.currentPlayerIndex = next;
+  state.phase = 'TURN';
+  afterTurnChange();
 }
 
 function endRound() {
+  state.forcedBusy = false;
+  state.isCpuBusy = false;
+  setThinking(false);
   const gains = {};
   state.players.forEach(p => {
-    if (p.status === 'BUSTED') { p.roundScore = 0; gains[p.id] = 0; }
-    else {
-      const res = calculateRoundScore(p);
-      p.roundScore = res.score;
-      p.score += res.score;
-      gains[p.id] = res.score;
-    }
+    const res = calculateRoundScore(p); // per chi ha fatto Doppione restituisce i punti in Banca (o 0)
+    p.roundScore = res.score;
+    p.score += res.score;
+    gains[p.id] = res.score;
   });
-
   state.phase = 'ROUND_END';
   renderGame();
   if (!checkGameOver()) showRoundEndModal(gains);
 }
 
 function checkGameOver() {
-  const targetScore = 200;
-  const reached = state.players.filter(p => p.score >= targetScore);
+  const reached = state.players.filter(p => p.score >= state.targetScore);
   if (reached.length === 0) return false;
-
   const sorted = [...state.players].sort((a, b) => b.score - a.score);
-  if (sorted[0].score > sorted[1].score) {
-    const winner = sorted[0];
-    state.phase = 'GAME_END';
-    state.winnerId = winner.id;
-    saveGameStats(winner.isHuman ? 'human' : 'ai');
-    showGameEndModal(winner);
-    return true;
-  }
-  return false; // tie above 200: keep playing
+  if (sorted[0].score === sorted[1].score) return false; // parità sopra il traguardo: si continua
+  const winner = sorted[0];
+  state.phase = 'GAME_END';
+  state.winnerId = winner.id;
+  renderGame();
+  saveGameStats(winner.id === state.localPlayerId ? 'win' : 'loss');
+  showGameEndModal(winner);
+  if (isHost()) relay({ k: 'gameEnd', winnerId: winner.id });
+  return true;
 }
 
 function proceedToNextRound() {
@@ -663,529 +637,765 @@ function proceedToNextRound() {
 }
 
 /* =========================================================
-   5. AI STRATEGY (probability-aware) + GEMINI INTEGRATION
+   5. CPU A TRE LIVELLI
    ========================================================= */
 function computeHitStats(player) {
-  const remaining = state.drawPile;
+  const remaining = state.drawPile.length > 0 ? state.drawPile : [...state.discardPile, ...state.usedCards];
   const total = remaining.length;
-  if (total === 0) return { bustProb: 0, avgGainIfSafe: 3, total: 0 };
+  if (total === 0) return { bustProb: 0, avgGainIfSafe: 4, safeValueShare: 1, total: 0 };
 
-  const heldValues = new Set(player.numberCards.map(c => c.value));
-  let dangerCount = 0, safeValueSum = 0, safeCount = 0;
+  const held = new Set(player.valueCards.filter(c => !c.joker).map(c => c.rank));
+  let danger = 0, safe = 0, safeSum = 0, safeValue = 0;
+  const currentSum = sumValues(player);
+  const hasDouble = player.modifierCards.some(c => c.effect === 'DOUBLE');
 
   for (const c of remaining) {
-    if (c.type === 'NUMBER') {
-      if (heldValues.has(c.value)) dangerCount++;
-      else { safeValueSum += c.value; safeCount++; }
+    if (c.type === 'VALUE') {
+      if (!c.joker && held.has(c.rank)) danger++;
+      else { safe++; safeValue++; safeSum += c.value * (hasDouble ? 2 : 1); }
     } else if (c.type === 'MODIFIER') {
-      safeCount++;
-      safeValueSum += (c.effect === 'MULTIPLIER_TWO') ? 7 : c.value;
+      safe++;
+      safeSum += c.effect === 'DOUBLE' ? (hasDouble ? 0 : Math.max(4, currentSum)) : c.value;
     } else {
-      safeCount++;
-      safeValueSum += 1.5; // action cards: mild, roughly-neutral estimated value
+      safe++;
+      safeSum += POWER_EV[c.effect] || 1;
     }
   }
-
   return {
-    bustProb: dangerCount / total,
-    avgGainIfSafe: safeCount > 0 ? safeValueSum / safeCount : 0,
+    bustProb: danger / total,
+    avgGainIfSafe: safe > 0 ? safeSum / safe : 0,
+    safeValueShare: safe > 0 ? safeValue / safe : 0,
     total
   };
 }
 
-function chooseAIActionHeuristic(aiIndex, level) {
-  const ai = state.players[aiIndex];
-  const human = state.players.find(p => p.isHuman) || state.players[0];
-  const uniqueCount = countUniqueNumbers(ai);
-  const roundScore = ai.roundScore;
+// Stima "a occhio" senza contare le carte: 8 copie per rango su 132 carte, ignora le carte già uscite.
+function naiveBustProb(player) {
+  const ranks = new Set(player.valueCards.filter(c => !c.joker).map(c => c.rank)).size;
+  return Math.min(0.95, (ranks * 8) / 132);
+}
 
-  if (ai.score + roundScore >= 200) return 'STAY'; // lock in the win
+function peekIsSafe(player, card) {
+  return !cardCausesBust(player, card);
+}
 
-  const { bustProb, avgGainIfSafe } = computeHitStats(ai);
+// FACILE — Prudente: si ferma presto, stima il rischio a occhio, usa la sbirciata solo a volte
+// e ogni tanto sbaglia. Non guarda mai l'avversario.
+function chooseEasy(me, peekCard) {
+  const rs = calculateRoundScore(me).score;
+  if (rs === 0) return 'HIT';
+  if (me.score + rs >= state.targetScore && Math.random() < 0.7) return 'STAY';
+  if (peekCard && Math.random() < 0.5) return peekIsSafe(me, peekCard) ? 'HIT' : 'STAY';
 
-  if (level === 'easy') {
-    if (roundScore === 0) return 'HIT';
-    if (bustProb > 0.6 && Math.random() < 0.7) return 'STAY';
-    return Math.random() < 0.45 ? 'STAY' : 'HIT';
-  }
+  const comfort = 16 + Math.floor(Math.random() * 10); // si accontenta di 16–25 punti
+  let action = (rs >= comfort || naiveBustProb(me) > 0.38) ? 'STAY' : 'HIT';
+  if (Math.random() < 0.15) action = action === 'HIT' ? 'STAY' : 'HIT'; // errore casuale
+  return action;
+}
 
-  if (level === 'normal') {
-    if (ai.secondChanceCard && bustProb < 0.55) return 'HIT';
-    if (uniqueCount >= 6) return 'HIT';
-    const evGain = (1 - bustProb) * avgGainIfSafe;
-    const evLoss = bustProb * roundScore;
-    return evGain > evLoss ? 'HIT' : 'STAY';
-  }
+// MEDIO — Calcolatore: valore atteso sulle carte davvero rimaste nel mazzo, usa Salvagente e
+// Sbircia, prova a chiudere il Filotto. Ignora il punteggio dell'avversario.
+function chooseNormal(me, peekCard) {
+  const rs = calculateRoundScore(me).score;
+  if (me.score + rs >= state.targetScore) return 'STAY';
+  if (peekCard) return (peekIsSafe(me, peekCard) || me.shieldCard) ? 'HIT' : 'STAY';
 
-  // hard
-  if (ai.secondChanceCard && bustProb < 0.65) return 'HIT';
-  if (uniqueCount >= 6) return 'HIT';
-  let evGain = (1 - bustProb) * avgGainIfSafe;
-  const evLoss = bustProb * roundScore;
-  if (ai.score < human.score) evGain *= 1.15; // slightly more risk-tolerant when behind
+  const { bustProb, avgGainIfSafe } = computeHitStats(me);
+  if (me.shieldCard && bustProb < 0.5) return 'HIT';
+  if (uniqueCount(me) >= FILOTTO_SIZE - 1 && bustProb < 0.5) return 'HIT';
+  const evGain = (1 - bustProb) * avgGainIfSafe;
+  const evLoss = bustProb * rs;
   return evGain > evLoss ? 'HIT' : 'STAY';
 }
 
-async function callGeminiRaw(prompt) {
-  const apiKey = localStorage.getItem('flip7_gemini_key') || '';
-  if (!apiKey) return null;
+// DIFFICILE — Stratega: come il Medio ma conosce la Banca (rischia solo i punti non al sicuro),
+// legge la situazione dell'avversario (se ha già chiuso con più punti deve superarlo, se
+// vincerebbe la partita è obbligato a rischiare), modula l'aggressività sul distacco e sul
+// traguardo e valuta il bonus Filotto.
+function chooseHard(me, opp, peekCard) {
+  const target = state.targetScore;
+  const myRound = calculateRoundScore(me).score;
+  const myTotal = me.score + myRound;
+  const oppFinished = opp.status !== 'ACTIVE';
+  const oppRound = oppFinished ? opp.roundScore : calculateRoundScore(opp).score;
+  const oppTotal = opp.score + oppRound;
+  const stats = computeHitStats(me);
 
-  if (!state.discoveredFlashModels || state.discoveredFlashModels.length === 0) {
-    state.discoveredFlashModels = await discoverLatestFlashModels(apiKey);
-  }
-  const modelsToTry = (state.discoveredFlashModels && state.discoveredFlashModels.length > 0)
-    ? state.discoveredFlashModels
-    : ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  let bustProb = stats.bustProb;
+  if (peekCard) bustProb = peekIsSafe(me, peekCard) ? 0 : 1;
+  if (me.shieldCard) bustProb *= 0.15; // il Salvagente assorbe il primo Doppione
 
-  for (const model of modelsToTry) {
-    try {
-      // Hard timeout: without it a stalled network request would leave the AI "thinking"
-      // forever and the game unable to continue.
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 300 }
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data = await res.json();
-        const text = data && data.candidates && data.candidates[0] &&
-                     data.candidates[0].content && data.candidates[0].content.parts &&
-                     data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
-        if (text) return text;
-      }
-    } catch (e) {
-      console.warn(`Gemini model ${model} failed, trying next...`, e);
-    }
-  }
-  return null;
+  // Chiudo se fermandomi vinco la partita.
+  if (myTotal >= target && myTotal > oppTotal) return 'STAY';
+  // L'avversario ha già chiuso e vincerebbe: fermarmi ora significa perdere, devo superarlo.
+  if (oppFinished && oppTotal >= target && myTotal <= oppTotal) return 'HIT';
+
+  const atRisk = Math.max(0, myRound - (me.bankedScore || 0));
+  let gain = (1 - bustProb) * stats.avgGainIfSafe;
+  if (uniqueCount(me) === FILOTTO_SIZE - 1) gain += (1 - bustProb) * stats.safeValueShare * FILOTTO_BONUS;
+  const loss = bustProb * atRisk;
+
+  let risk = 1;
+  const diff = me.score - opp.score;
+  if (diff < -40) risk = 1.35;
+  else if (diff < -15) risk = 1.15;
+  else if (diff > 40) risk = 0.8;
+  else if (diff > 15) risk = 0.9;
+  if (oppFinished && oppRound > myRound) risk *= 1.2;        // devo recuperare in questa mano
+  if (oppFinished && oppRound <= myRound && myRound > 0) risk *= 0.85; // sono già avanti: proteggo
+  const oppNearWin = target - oppTotal <= 25;
+  if (oppNearWin && myTotal < oppTotal) risk *= 1.15;        // la partita sta per finire: spingo
+
+  return gain * risk > loss ? 'HIT' : 'STAY';
 }
 
-function buildGeminiHitStayPrompt(aiIndex) {
-  const ai = state.players[aiIndex];
-  const human = state.players.find(p => p.isHuman);
-  const stats = computeHitStats(ai);
-  const heldNumbers = ai.numberCards.map(c => c.value).sort((a, b) => a - b).join(', ') || 'nessuno';
-  const modifiers = ai.modifierCards.map(c => c.effect === 'MULTIPLIER_TWO' ? 'x2' : `+${c.value}`).join(', ') || 'nessuno';
-
-  return `Sei un giocatore ESPERTO di Flip 7, un gioco di carte "push your luck". Stai decidendo la mossa dell'IA.
-
-REGOLE ESSENZIALI:
-- Mazzo: carte Numero 0-12 (copie = valore, lo 0 ne ha 1 sola), Modificatori (+2,+4,+6,+8,+10,x2), Azioni (FREEZE, FLIP THREE, SECOND CHANCE).
-- Se peschi un numero che hai già, vai in BUST e perdi tutti i punti della mano (a meno di avere Second Chance).
-- 7 numeri diversi = FLIP 7: mano finita subito, bonus +15.
-- Punteggio mano = (somma numeri, ×2 se hai il modificatore x2) + somma dei +N. Vince chi arriva primo a 200 punti totali.
-- FREEZE/FLIP THREE non si scelgono: vanno sempre automaticamente all'avversario.
-
-STATO ATTUALE:
-- Tuoi numeri: ${heldNumbers} (${countUniqueNumbers(ai)}/7 unici)
-- Tuoi modificatori: ${modifiers}
-- Second Chance in mano: ${ai.secondChanceCard ? 'sì' : 'no'}
-- Punteggio mano se ti fermi ora: ${ai.roundScore}
-- Punteggio totale tuo: ${ai.score} — avversario: ${human.score}
-- Carte rimaste nel mazzo: ${stats.total}
-- PROBABILITÀ ESATTA DI BUST se peschi ora: ${(stats.bustProb * 100).toFixed(1)}%
-- Valore medio atteso se peschi in sicurezza: ~${stats.avgGainIfSafe.toFixed(1)} punti
-
-Usa la probabilità di bust data sopra (è esatta, calcolata sul mazzo reale): non stimarla tu. Decidi HIT (pesca) o STAY (fermati) pensando al rischio contro il guadagno atteso. Pensa brevemente, poi rispondi SOLO con un JSON come ultima riga, es: {"action": "HIT"}`;
+function chooseCpuAction(playerIndex, level) {
+  const me = state.players[playerIndex];
+  const opp = getOpponent(me);
+  const peekCard = peekCardFor(me.id);
+  if (level === 'easy') return chooseEasy(me, peekCard);
+  if (level === 'normal') return chooseNormal(me, peekCard);
+  return chooseHard(me, opp, peekCard);
 }
 
-async function chooseGeminiAction(aiIndex) {
-  const text = await callGeminiRaw(buildGeminiHitStayPrompt(aiIndex));
-  if (text) {
-    const matches = text.match(/\{[^{}]*\}/g);
-    if (matches) {
-      try {
-        const obj = JSON.parse(matches[matches.length - 1]);
-        if (obj.action === 'HIT' || obj.action === 'STAY') return obj.action;
-      } catch (e) { /* fall through to heuristic */ }
-    }
-  }
-  return chooseAIActionHeuristic(aiIndex, 'hard');
-}
+function triggerCpuTurnIfNeeded() {
+  if (state.phase !== 'TURN' || state.forcedBusy) return;
+  const idx = state.currentPlayerIndex;
+  const cpu = state.players[idx];
+  if (!cpu || cpu.controller !== 'cpu') return;
+  if (cpu.status !== 'ACTIVE') { checkTurnOrRoundEnd(); return; }
 
-function triggerAITurnIfNeeded() {
-  if (state.phase !== 'AI_TURN') return;
-  const aiIdx = state.players.findIndex(p => !p.isHuman && p.status === 'ACTIVE');
-  if (aiIdx === -1) {
-    // Defensive: phase says it's the AI's turn but the AI can't act. Rather than sitting
-    // there forever, hand control back to the normal turn resolution.
-    state.isAiBusy = false;
-    setAiThinking(false);
-    checkTurnOrRoundEnd();
-    return;
-  }
-
-  state.isAiBusy = true;
-  setAiThinking(true);
-  const token = state.sequenceToken;
-
-  const commit = (action) => {
+  state.isCpuBusy = true;
+  setThinking(true);
+  const token = sequenceToken;
+  const base = state.mode === 'hard' ? 700 : (state.mode === 'normal' ? 600 : 450);
+  const delay = base + Math.floor(Math.random() * 500);
+  setTimeout(() => {
     if (isStale(token)) return;
-    state.isAiBusy = false;
-    setAiThinking(false);
-    if (state.phase !== 'AI_TURN' || state.players[aiIdx].status !== 'ACTIVE') { renderGame(); return; }
-    if (action === 'HIT') drawCard(aiIdx); else playerStay(aiIdx);
-  };
-
-  if (state.mode === 'gemini') {
-    chooseGeminiAction(aiIdx)
-      .catch(() => chooseAIActionHeuristic(aiIdx, 'hard'))
-      .then(action => {
-        if (isStale(token)) return;
-        setTimeout(() => commit(action), 350);
-      });
-  } else {
-    const delay = Math.floor(Math.random() * 650) + 650;
-    setTimeout(() => commit(chooseAIActionHeuristic(aiIdx, state.mode)), delay);
-  }
+    state.isCpuBusy = false;
+    setThinking(false);
+    if (state.phase !== 'TURN' || state.currentPlayerIndex !== idx || cpu.status !== 'ACTIVE') { renderGame(); return; }
+    const action = chooseCpuAction(idx, state.mode);
+    if (action === 'HIT') drawCard(idx); else playerStay(idx);
+  }, delay);
 }
 
 /* =========================================================
    6. RENDERING
    ========================================================= */
-function createCardChip(card, isBustDuplicate) {
-  const div = document.createElement('div');
-  if (card.type === 'NUMBER') {
-    div.className = 'card-chip chip-number' + (isBustDuplicate ? ' chip-bust-duplicate' : '');
-    div.textContent = card.value;
-  } else if (card.type === 'MODIFIER') {
-    div.className = 'card-chip chip-modifier';
-    div.textContent = card.effect === 'MULTIPLIER_TWO' ? 'x2' : `+${card.value}`;
-  } else {
-    div.className = 'card-chip chip-action';
-    div.textContent = card.effect === 'FREEZE' ? '❄️' : (card.effect === 'FLIP_THREE' ? '🎲' : '🛡️');
-  }
-  return div;
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
-function renderStatusBadge(element, status, roundScore) {
-  element.className = 'badge-status ';
-  if (status === 'ACTIVE') { element.classList.add('status-active'); element.textContent = 'ATTIVO'; }
-  else if (status === 'STAYED') { element.classList.add('status-stayed'); element.textContent = `FERMO (${roundScore}pt)`; }
-  else if (status === 'BUSTED') { element.classList.add('status-busted'); element.textContent = 'BUST (0pt)'; }
-  else if (status === 'FREEZED') { element.classList.add('status-freezed'); element.textContent = 'FREEZE'; }
-  else if (status === 'FLIP_7') { element.classList.add('status-flip7'); element.textContent = '🎉 FLIP 7'; }
+function createCardEl(card, extraClass) {
+  const el = document.createElement('div');
+  el.className = 'pcard ' + (extraClass || '');
+  if (card.type === 'VALUE') {
+    if (card.joker) {
+      el.classList.add('joker');
+      el.innerHTML = '<span class="big">★</span><span class="lbl">JOLLY</span>';
+    } else {
+      el.classList.add(card.suit === '♥' || card.suit === '♦' ? 'red' : 'black');
+      el.innerHTML = `<span class="rk">${card.rank}<i>${card.suit}</i></span><span class="st">${card.suit}</span><span class="rk rk-b">${card.rank}<i>${card.suit}</i></span>`;
+    }
+    el.title = card.joker ? 'Jolly: vale 0, conta come carta diversa' : `${card.rank}${card.suit} = ${card.value} punti`;
+  } else if (card.type === 'MODIFIER') {
+    el.classList.add('mod');
+    el.innerHTML = `<span class="big">${card.effect === 'DOUBLE' ? '×2' : '+' + card.value}</span><span class="lbl">${card.effect === 'DOUBLE' ? 'RADDOPPIA' : 'BONUS'}</span>`;
+  } else {
+    const info = POWER_INFO[card.effect];
+    el.classList.add('power', 'pw-' + info.css);
+    el.innerHTML = `<span class="big">${info.icon}</span><span class="lbl">${info.label}</span>`;
+  }
+  return el;
+}
+
+function renderStatusBadge(el, player) {
+  el.className = 'badge-status ';
+  switch (player.status) {
+    case 'ACTIVE': el.classList.add('status-active'); el.textContent = 'IN GIOCO'; break;
+    case 'STAYED': el.classList.add('status-stayed'); el.textContent = `FERMO · ${player.roundScore} pt`; break;
+    case 'BUSTED': el.classList.add('status-busted'); el.textContent = `DOPPIONE · ${player.roundScore} pt`; break;
+    case 'FROZEN': el.classList.add('status-frozen'); el.textContent = `GELO · ${player.roundScore} pt`; break;
+    case 'FILOTTO': el.classList.add('status-filotto'); el.textContent = '🌟 FILOTTO'; break;
+    default: break;
+  }
 }
 
 function renderPlayerZone(player, prefix, isActiveTurn, inRound) {
+  document.getElementById(`${prefix}-name`).textContent = player.name;
   document.getElementById(`${prefix}-total`).textContent = player.score;
   document.getElementById(`${prefix}-round-score`).textContent = player.roundScore;
-  document.getElementById(`${prefix}-unique`).textContent = countUniqueNumbers(player);
-  renderStatusBadge(document.getElementById(`${prefix}-status-badge`), player.status, player.roundScore);
+  document.getElementById(`${prefix}-unique`).textContent = uniqueCount(player);
+  renderStatusBadge(document.getElementById(`${prefix}-status-badge`), player);
 
-  const cardsBox = document.getElementById(`${prefix}-cards`);
-  cardsBox.innerHTML = '';
-  player.numberCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
-  // The duplicate card that caused the BUST stays visible right next to the original,
-  // clearly marked, so it's obvious which number was doubled.
-  if (player.bustCard) cardsBox.appendChild(createCardChip(player.bustCard, true));
-  player.modifierCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
-  if (player.secondChanceCard) cardsBox.appendChild(createCardChip(player.secondChanceCard));
-  // Spent action cards (Freeze/Flip Three) stay visible on the table too, purely for
-  // reference — they were already excluded from calculateRoundScore from the start.
-  player.usedActionCards.forEach(c => cardsBox.appendChild(createCardChip(c)));
+  const bank = document.getElementById(`${prefix}-bank`);
+  if (player.bankedScore > 0) { bank.style.display = 'inline-flex'; bank.textContent = `🏦 ${player.bankedScore}`; }
+  else bank.style.display = 'none';
+
+  const box = document.getElementById(`${prefix}-cards`);
+  box.innerHTML = '';
+  player.valueCards.forEach(c => box.appendChild(createCardEl(c)));
+  if (player.bustCard) box.appendChild(createCardEl(player.bustCard, 'bust-dup'));
+  player.modifierCards.forEach(c => box.appendChild(createCardEl(c)));
+  if (player.shieldCard) box.appendChild(createCardEl(player.shieldCard));
+  player.usedPowerCards.forEach(c => box.appendChild(createCardEl(c, 'spent')));
 
   const zone = document.getElementById(`${prefix}-zone`);
   zone.classList.toggle('active-turn', inRound && isActiveTurn);
   zone.classList.toggle('inactive-turn', inRound && !isActiveTurn);
+  zone.classList.toggle('is-busted', player.status === 'BUSTED');
 }
 
-function setAiThinking(active) {
-  document.getElementById('status-thinking-dots').style.display = active ? 'flex' : 'none';
+function setThinking(active) {
+  const el = document.getElementById('status-thinking-dots');
+  if (el) el.style.display = active ? 'flex' : 'none';
 }
 
 function renderGame() {
-  const human = state.players.find(p => p.isHuman);
-  const ai = state.players.find(p => !p.isHuman);
-  if (!human || !ai) return;
+  const me = localPlayer();
+  const opp = me ? getOpponent(me) : null;
+  if (!me || !opp) return;
 
-  const oppLabel = opponentLabel();
-  document.getElementById('human-name').textContent = state.p1Name;
-  document.getElementById('ai-name').textContent = oppLabel;
+  const inRound = state.phase === 'TURN';
+  const current = currentPlayer();
+  const myTurn = inRound && !!current && current.id === me.id;
+
   document.getElementById('status-right').innerHTML =
-    `Tu <strong>${human.score}</strong> · ${oppLabel} <strong>${ai.score}</strong> · 🂠<strong>${state.drawPile.length}</strong>`;
+    `🎯 <strong>${state.targetScore}</strong> · Mazzo <strong>${deckCount()}</strong>`;
+  document.getElementById('opp-avatar').textContent = opp.controller === 'cpu' ? '🤖' : '🧑‍🤝‍🧑';
 
-  const inRound = state.phase === 'PLAYER_TURN' || state.phase === 'AI_TURN';
-  const currentPlayer = state.players[state.currentPlayerIndex];
-
-  renderPlayerZone(human, 'human', inRound && currentPlayer && currentPlayer.isHuman, inRound);
-  renderPlayerZone(ai, 'ai', inRound && currentPlayer && !currentPlayer.isHuman, inRound);
+  renderPlayerZone(me, 'me', myTurn, inRound);
+  renderPlayerZone(opp, 'opp', inRound && !myTurn, inRound);
 
   const dot = document.getElementById('status-dot');
   const text = document.getElementById('status-text');
-  if (currentPlayer && inRound) {
-    dot.style.background = currentPlayer.isHuman ? 'var(--primary)' : 'var(--purple)';
-    text.textContent = currentPlayer.isHuman ? `Turno: ${state.p1Name}` : `Turno: ${oppLabel}`;
+  if (inRound && current) {
+    dot.style.background = myTurn ? 'var(--accent)' : 'var(--purple)';
+    text.textContent = `Mano ${state.roundNumber} · tocca a ${myTurn ? 'te' : current.name}`;
   } else if (state.phase === 'ROUND_END') {
     dot.style.background = 'var(--blue)';
-    text.textContent = `Fine Mano ${state.roundNumber}`;
+    text.textContent = `Fine mano ${state.roundNumber}`;
   } else if (state.phase === 'GAME_END') {
-    dot.style.background = 'var(--primary)';
-    text.textContent = 'Partita Finita';
+    dot.style.background = 'var(--accent)';
+    text.textContent = 'Partita finita';
   }
+  if (!isGuest()) setThinking(state.isCpuBusy || state.forcedBusy);
+  else setThinking(inRound && !myTurn);
 
-  const promptEl = document.getElementById('turn-prompt');
-  if (state.phase === 'PLAYER_TURN') {
-    promptEl.innerHTML = 'Premi <strong>HIT</strong> per pescare o <strong>STAY</strong> per fermarti.';
-  } else if (state.phase === 'AI_TURN') {
-    promptEl.textContent = `${oppLabel} sta decidendo...`;
+  // Carta sbirciata (visibile solo a chi ha pescato SBIRCIA)
+  const peekBox = document.getElementById('peek-box');
+  const peekCard = inRound ? peekCardFor(me.id) : null;
+  if (peekCard) {
+    peekBox.style.display = 'flex';
+    const slot = document.getElementById('peek-card');
+    slot.innerHTML = '';
+    slot.appendChild(createCardEl(peekCard, 'mini'));
+    document.getElementById('peek-hint').textContent = cardCausesBust(me, peekCard)
+      ? (me.shieldCard ? 'Sarebbe un Doppione, ma hai il Salvagente.' : 'Attenzione: sarebbe un Doppione!')
+      : 'È sicura: nessun Doppione.';
   } else {
-    promptEl.innerHTML = '&nbsp;';
+    peekBox.style.display = 'none';
   }
 
-  const canAct = state.phase === 'PLAYER_TURN' && human.status === 'ACTIVE';
+  const prompt = document.getElementById('turn-prompt');
+  const canAct = myTurn && me.status === 'ACTIVE' && !state.forcedBusy && !state.isCpuBusy;
+  if (canAct) prompt.innerHTML = '<strong>PESCA</strong> una carta o fai <strong>STOP</strong> per tenere i punti.';
+  else if (inRound && state.forcedBusy) prompt.textContent = 'Pescate forzate in corso…';
+  else if (inRound && current && !myTurn) prompt.textContent = `${current.name} sta decidendo…`;
+  else if (inRound && myTurn) prompt.textContent = 'Attendi…';
+  else prompt.innerHTML = '&nbsp;';
+
   document.getElementById('btn-hit').disabled = !canAct;
   document.getElementById('btn-stay').disabled = !canAct;
-  document.getElementById('btn-undo').disabled = !canUndo();
+  const undoBtn = document.getElementById('btn-undo');
+  undoBtn.style.display = state.mode === 'online' ? 'none' : '';
+  undoBtn.disabled = !canUndo();
+  document.getElementById('btn-restart').style.display = isGuest() ? 'none' : '';
+
+  if (isHost()) relay({ k: 'state', s: snapshotForGuest() });
+}
+
+function summaryRows(gains) {
+  const me = localPlayer();
+  const opp = getOpponent(me);
+  const row = (p) => {
+    const gain = gains ? `<span class="gain">+${gains[p.id] || 0}</span>` : '';
+    return `<div class="summary-row"><span class="name">${escapeHtml(p.name)}</span>${gain}<span class="total">tot. <strong>${p.score}</strong></span></div>`;
+  };
+  return row(me) + row(opp);
 }
 
 function showRoundEndModal(gains) {
-  const human = state.players.find(p => p.isHuman);
-  const ai = state.players.find(p => !p.isHuman);
-  document.getElementById('round-end-title').textContent = `Fine Mano ${state.roundNumber}`;
-  document.getElementById('round-end-summary').innerHTML = `
-    <div class="summary-row"><span class="name">${state.p1Name}</span><span class="gain">+${gains[human.id] || 0}</span><span class="total">tot. ${human.score}</span></div>
-    <div class="summary-row"><span class="name">${opponentLabel()}</span><span class="gain">+${gains[ai.id] || 0}</span><span class="total">tot. ${ai.score}</span></div>
-  `;
-  document.getElementById('round-end-modal').showModal();
+  document.getElementById('round-end-title').textContent = `Fine mano ${state.roundNumber}`;
+  document.getElementById('round-end-summary').innerHTML =
+    summaryRows(gains) + `<p class="modal-note">Traguardo: <strong>${state.targetScore}</strong> punti</p>`;
+  const btn = document.getElementById('btn-next-round');
+  btn.textContent = 'Prossima mano →';
+  btn.disabled = false;
+  openDialog('round-end-modal');
+  if (isHost()) relay({ k: 'roundEnd', gains, roundNumber: state.roundNumber });
 }
 
 function showGameEndModal(winner) {
-  const human = state.players.find(p => p.isHuman);
-  const ai = state.players.find(p => !p.isHuman);
-  document.getElementById('game-end-title').textContent = winner.isHuman ? '🏆 Hai Vinto!' : `🤖 Ha Vinto la ${opponentLabel()}`;
-  document.getElementById('game-end-summary').innerHTML = `
-    <div class="summary-row"><span class="name">${state.p1Name}</span><span class="total">${human.score} pt</span></div>
-    <div class="summary-row"><span class="name">${opponentLabel()}</span><span class="total">${ai.score} pt</span></div>
-  `;
-  document.getElementById('game-end-modal').showModal();
+  const me = localPlayer();
+  const won = winner.id === me.id;
+  if (won) playSfxLocal('win');
+  document.getElementById('game-end-title').textContent = won ? '🏆 Hai vinto!' : `😬 Ha vinto ${winner.name}`;
+  document.getElementById('game-end-summary').innerHTML = summaryRows(null);
+  const btn = document.getElementById('btn-rematch');
+  btn.textContent = isGuest() ? 'Chiedi la rivincita' : 'Rivincita';
+  btn.disabled = false;
+  openDialog('game-end-modal');
 }
 
 /* =========================================================
-   7. SCREEN NAVIGATION & CONTROLS
+   7. NAVIGAZIONE E CONTROLLI
    ========================================================= */
+function openDialog(id) {
+  const d = document.getElementById(id);
+  if (d && !d.open) d.showModal();
+}
+function closeDialog(id) {
+  const d = document.getElementById(id);
+  if (d && d.open) d.close();
+}
+function closeAllDialogs() {
+  document.querySelectorAll('dialog[open]').forEach(d => d.close());
+}
+
 function navigateScreen(screenId) {
   document.querySelectorAll('.view-screen').forEach(el => el.classList.remove('active'));
   document.getElementById(screenId).classList.add('active');
 }
 
+function readNameInput(id) {
+  const el = document.getElementById(id);
+  const name = (el && el.value.trim()) || settings.playerName || 'Giocatore';
+  return name.slice(0, 16);
+}
+
+function onNameChange(inputId) {
+  settings.playerName = readNameInput(inputId);
+  saveSettings();
+  document.querySelectorAll('input.name-input').forEach(el => { el.value = settings.playerName; });
+}
+
+function renderSetupChoices() {
+  document.querySelectorAll('input.name-input').forEach(el => { el.value = settings.playerName; });
+  document.querySelectorAll('.level-card').forEach(el => {
+    el.classList.toggle('selected', el.dataset.level === settings.level);
+  });
+  document.querySelectorAll('.seg-btn').forEach(el => {
+    el.classList.toggle('selected', parseInt(el.dataset.target, 10) === settings.target);
+  });
+  const desc = document.getElementById('level-desc');
+  if (desc) desc.textContent = LEVEL_INFO[settings.level].desc;
+}
+
+function selectLevel(level) {
+  if (!LEVEL_INFO[level] || level === 'online') return;
+  settings.level = level;
+  saveSettings();
+  renderSetupChoices();
+}
+
+function selectTarget(target) {
+  const t = parseInt(target, 10);
+  if (!TARGET_OPTIONS.includes(t)) return;
+  settings.target = t;
+  saveSettings();
+  renderSetupChoices();
+}
+
 function openSetupScreen() {
-  loadSavedProfile();
+  renderSetupChoices();
   navigateScreen('screen-setup');
 }
 
 function onHitClick() {
   initAudio();
-  const idx = state.players.findIndex(p => p.isHuman);
-  if (idx !== -1 && state.phase === 'PLAYER_TURN') drawCard(idx);
+  if (isGuest()) { relay({ k: 'action', a: 'HIT' }); return; }
+  const me = localPlayer();
+  if (!me) return;
+  const idx = state.players.indexOf(me);
+  if (state.phase === 'TURN' && state.currentPlayerIndex === idx && !state.forcedBusy && !state.isCpuBusy) drawCard(idx);
 }
 
 function onStayClick() {
   initAudio();
-  const idx = state.players.findIndex(p => p.isHuman);
-  if (idx !== -1 && state.phase === 'PLAYER_TURN') playerStay(idx);
+  if (isGuest()) { relay({ k: 'action', a: 'STAY' }); return; }
+  const me = localPlayer();
+  if (!me) return;
+  const idx = state.players.indexOf(me);
+  if (state.phase === 'TURN' && state.currentPlayerIndex === idx && !state.forcedBusy && !state.isCpuBusy) playerStay(idx);
 }
 
 function canUndo() {
-  return state.undoStack.length > 0 && !state.isAiBusy &&
-         state.phase !== 'ROUND_END' && state.phase !== 'GAME_END';
+  return state.mode !== 'online' && state.undoStack.length > 0 && !state.isCpuBusy && !state.forcedBusy &&
+         state.phase === 'TURN';
 }
 
-// Undo rewinds to the player's own last decision point. Rewinding onto a CPU turn would
-// be pointless — the CPU would instantly replay its move and cancel out the undo — so we
-// keep popping until we're back on a human turn (or the history runs out).
+// L'annulla riporta all'ultimo punto in cui toccava a te decidere: tornare su un turno della
+// CPU sarebbe inutile (rigiocherebbe subito la stessa mossa).
 function onUndoClick() {
   if (!canUndo()) return;
-  bumpSequence(); // cancel any paced continuation still in flight from the old timeline
-
+  bumpSequence();
   let prev = null;
   while (state.undoStack.length > 0) {
     prev = state.undoStack.pop();
-    const landsOnHuman = prev.phase === 'PLAYER_TURN' &&
-      prev.players[prev.currentPlayerIndex] && prev.players[prev.currentPlayerIndex].isHuman;
-    if (landsOnHuman) break;
+    const p = prev.players[prev.currentPlayerIndex];
+    if (prev.phase === 'TURN' && p && p.controller === 'local') break;
   }
   if (!prev) return;
-
   state.players = prev.players;
   state.drawPile = prev.drawPile;
   state.discardPile = prev.discardPile;
   state.usedCards = prev.usedCards;
+  state.peek = prev.peek;
   state.currentPlayerIndex = prev.currentPlayerIndex;
   state.dealerIndex = prev.dealerIndex;
   state.roundNumber = prev.roundNumber;
   state.phase = prev.phase;
-  state.isAiBusy = false;
-  setAiThinking(false);
-  renderGame();
-
-  // Only nudge the CPU if we genuinely couldn't get back to a human decision point.
-  if (state.phase === 'AI_TURN') triggerAITurnIfNeeded();
+  state.isCpuBusy = false;
+  state.forcedBusy = false;
+  setThinking(false);
+  afterTurnChange();
 }
 
 function onNextRoundClick() {
-  document.getElementById('round-end-modal').close();
+  if (isGuest()) {
+    const btn = document.getElementById('btn-next-round');
+    btn.textContent = 'In attesa dell\'altro giocatore…';
+    btn.disabled = true;
+    relay({ k: 'next' });
+    return;
+  }
+  closeDialog('round-end-modal');
   proceedToNextRound();
 }
 
-function onNewGameFromEndClick() {
-  document.getElementById('game-end-modal').close();
-  startNewGame();
+function onRematchClick() {
+  if (isGuest()) {
+    const btn = document.getElementById('btn-rematch');
+    btn.textContent = 'Richiesta inviata, attendi…';
+    btn.disabled = true;
+    relay({ k: 'rematch' });
+    return;
+  }
+  closeDialog('game-end-modal');
+  if (state.config) startNewGame(state.config);
 }
 
 function confirmExitToHome() {
-  document.getElementById('exit-confirm-dialog').showModal();
+  openDialog('exit-confirm-dialog');
+}
+
+function exitToHome() {
+  closeAllDialogs();
+  bumpSequence();
+  if (online.role) leaveOnline(false);
+  state = freshState();
+  navigateScreen('screen-home');
 }
 
 function restartMatch() {
-  document.getElementById('restart-confirm-dialog').showModal();
+  if (isGuest()) return;
+  openDialog('restart-confirm-dialog');
 }
 
 function confirmRestartMatch() {
-  document.getElementById('restart-confirm-dialog').close();
-  startNewGame();
+  closeDialog('restart-confirm-dialog');
+  if (state.config) startNewGame(state.config);
 }
 
 function exitApp() {
-  document.getElementById('exit-app-confirm-dialog').showModal();
+  openDialog('exit-app-confirm-dialog');
 }
 
 /* =========================================================
-   8. PROFILE, DIFFICULTY & GEMINI SETTINGS
+   8. MULTIPLAYER ONLINE
+   L'host esegue il motore di gioco e invia all'ospite una fotografia dello stato dopo ogni
+   aggiornamento; l'ospite invia solo le sue decisioni (PESCA/STOP, prossima mano, rivincita).
+   Il server è un semplice relay: crea stanze con codice e inoltra i messaggi tra i due giocatori.
    ========================================================= */
-function saveProfile() {
-  const name = document.getElementById('p1-name-input').value.trim() || 'Giocatore';
-  localStorage.setItem('flip7_profile', JSON.stringify({ p1Name: name }));
+const online = { socket: null, role: null, code: null, peerName: '', myName: '', connecting: false };
+
+function isHost() { return online.role === 'host' && state.mode === 'online' && state.players.length === 2; }
+function isGuest() { return online.role === 'guest'; }
+
+function resolveServerUrl() {
+  const custom = (settings.serverUrl || '').trim();
+  if (custom) return custom.replace(/^http/, 'ws');
+  if ((location.protocol === 'http:' || location.protocol === 'https:') && !/github\.io$/.test(location.hostname)) {
+    return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  }
+  return '';
 }
 
-function loadSavedProfile() {
-  const raw = localStorage.getItem('flip7_profile');
-  if (!raw) return;
+function setOnlineStatus(text, isError) {
+  const el = document.getElementById('online-status');
+  el.textContent = text || '';
+  el.classList.toggle('error', !!isError);
+}
+
+function connectOnline() {
+  return new Promise((resolve, reject) => {
+    const url = resolveServerUrl();
+    if (!url) { reject(new Error('Nessun server online configurato: inseriscilo in Opzioni.')); return; }
+    if (online.socket && online.socket.readyState === WebSocket.OPEN) { resolve(online.socket); return; }
+    let ws;
+    try { ws = new WebSocket(url); } catch (e) { reject(new Error('Indirizzo del server non valido.')); return; }
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch (e) { /* ignora */ }
+      reject(new Error('Il server non risponde. Controlla l\'indirizzo in Opzioni.'));
+    }, 8000);
+    ws.onopen = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      online.socket = ws;
+      resolve(ws);
+    };
+    ws.onerror = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error('Connessione al server fallita. Controlla l\'indirizzo in Opzioni.'));
+    };
+    ws.onmessage = (ev) => {
+      let msg = null;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (msg && typeof msg === 'object') handleServerMessage(msg);
+    };
+    ws.onclose = () => {
+      const wasInRoom = !!online.role;
+      online.socket = null;
+      if (wasInRoom) onPeerGone('Connessione persa con il server.');
+    };
+  });
+}
+
+function onlineSend(obj) {
+  if (online.socket && online.socket.readyState === WebSocket.OPEN) online.socket.send(JSON.stringify(obj));
+}
+function relay(data) {
+  if (!online.role) return;
+  onlineSend({ t: 'relay', d: data });
+}
+
+function openOnlineScreen() {
+  renderSetupChoices();
+  document.getElementById('online-waiting').style.display = 'none';
+  document.getElementById('online-forms').style.display = '';
+  document.getElementById('room-code-input').value = '';
+  const url = resolveServerUrl();
+  setOnlineStatus(url ? `Server: ${url}` : 'Nessun server configurato: aggiungilo in Opzioni.', !url);
+  navigateScreen('screen-online');
+}
+
+async function onlineCreateRoom() {
+  if (online.connecting) return;
+  online.connecting = true;
+  online.myName = readNameInput('online-name-input');
+  settings.playerName = online.myName;
+  saveSettings();
+  setOnlineStatus('Connessione al server…');
   try {
-    const saved = JSON.parse(raw);
-    if (saved.p1Name) document.getElementById('p1-name-input').value = saved.p1Name;
-  } catch (e) { /* ignore */ }
-}
-
-function onDifficultyChange(mode) {
-  updateAiModelCaption(mode);
-}
-
-function formatModelLabel(modelId) {
-  return modelId.split('-').map(part => /^\d/.test(part) ? part : (part.charAt(0).toUpperCase() + part.slice(1))).join(' ');
-}
-
-async function discoverLatestFlashModels(apiKey) {
-  try {
-    // Same hard timeout rationale as callGeminiRaw: never let a stalled request block play.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`, { signal: controller.signal });
-    clearTimeout(timer);
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (!data.models) return [];
-
-    const flashModels = data.models
-      .map(m => m.name.replace('models/', ''))
-      .filter(name => {
-        const lower = name.toLowerCase();
-        return lower.includes('flash') &&
-               !lower.includes('pro') &&
-               !lower.includes('lite') &&
-               !lower.includes('preview') &&
-               !lower.includes('embed') &&
-               !lower.includes('tts') &&
-               !lower.includes('imagen') &&
-               !lower.includes('latest') &&
-               /\d/.test(lower);
-      })
-      .sort()
-      .reverse();
-
-    return flashModels.slice(0, 3);
+    await connectOnline();
+    onlineSend({ t: 'create', name: online.myName, target: settings.target });
   } catch (e) {
-    console.warn('Auto-discovery flash models failed:', e);
-    return [];
+    setOnlineStatus(e.message, true);
+  }
+  online.connecting = false;
+}
+
+async function onlineJoinRoom() {
+  if (online.connecting) return;
+  const code = document.getElementById('room-code-input').value.trim().toUpperCase();
+  if (code.length !== 4) { setOnlineStatus('Inserisci il codice stanza di 4 caratteri.', true); return; }
+  online.connecting = true;
+  online.myName = readNameInput('online-name-input');
+  settings.playerName = online.myName;
+  saveSettings();
+  setOnlineStatus('Connessione al server…');
+  try {
+    await connectOnline();
+    onlineSend({ t: 'join', code, name: online.myName });
+  } catch (e) {
+    setOnlineStatus(e.message, true);
+  }
+  online.connecting = false;
+}
+
+function onlineCancel() {
+  leaveOnline(false);
+  openOnlineScreen();
+}
+
+function leaveOnline(silent) {
+  const hadRole = !!online.role;
+  online.role = null;
+  online.code = null;
+  online.peerName = '';
+  if (online.socket) {
+    const ws = online.socket;
+    online.socket = null;
+    try { ws.onclose = null; ws.send(JSON.stringify({ t: 'leave' })); ws.close(); } catch (e) { /* ignora */ }
+  }
+  if (hadRole && !silent) showToast('Hai lasciato la stanza.');
+}
+
+function onPeerGone(reason) {
+  const wasPlaying = document.getElementById('screen-game').classList.contains('active');
+  online.role = null;
+  online.code = null;
+  online.peerName = '';
+  if (online.socket) { try { online.socket.onclose = null; online.socket.close(); } catch (e) { /* ignora */ } online.socket = null; }
+  bumpSequence();
+  closeAllDialogs();
+  if (wasPlaying) {
+    state = freshState();
+    navigateScreen('screen-home');
+    showToast(reason || 'L\'altro giocatore ha lasciato la partita.');
+  } else {
+    openOnlineScreen();
+    setOnlineStatus(reason || 'L\'altro giocatore ha lasciato la stanza.', true);
   }
 }
 
-async function updateAiModelCaption(mode) {
-  const caption = document.getElementById('ai-model-caption');
-  if (mode !== 'gemini') { caption.style.display = 'none'; return; }
-  caption.style.display = 'block';
-  const apiKey = localStorage.getItem('flip7_gemini_key') || '';
-  if (!apiKey) {
-    caption.textContent = "Il modello Flash più recente verrà rilevato all'avvio (serve una chiave API in Opzioni).";
+function handleServerMessage(msg) {
+  switch (msg.t) {
+    case 'created':
+      online.role = 'host';
+      online.code = msg.code;
+      document.getElementById('online-forms').style.display = 'none';
+      document.getElementById('online-waiting').style.display = '';
+      document.getElementById('room-code-display').textContent = msg.code;
+      setOnlineStatus('Stanza creata: condividi il codice e attendi l\'avversario.');
+      break;
+    case 'peer_joined':
+      online.peerName = sanitizeName(msg.peerName);
+      showToast(`${online.peerName} è entrato: si comincia!`);
+      startNewGame({
+        mode: 'online',
+        targetScore: settings.target,
+        players: [
+          { id: 'p1', name: online.myName, controller: 'local' },
+          { id: 'p2', name: online.peerName, controller: 'remote' }
+        ]
+      });
+      break;
+    case 'joined':
+      online.role = 'guest';
+      online.code = msg.code;
+      online.peerName = sanitizeName(msg.peerName);
+      bumpSequence();
+      state = freshState();
+      state.mode = 'online';
+      state.localPlayerId = 'p2';
+      closeAllDialogs();
+      navigateScreen('screen-game');
+      showToast(`Sei nella stanza di ${online.peerName}. Attendi la prima mano…`);
+      break;
+    case 'relay':
+      if (msg.d && typeof msg.d === 'object') handleRelay(msg.d);
+      break;
+    case 'peer_left':
+      onPeerGone('L\'altro giocatore ha lasciato la partita.');
+      break;
+    case 'error':
+      setOnlineStatus(typeof msg.message === 'string' ? msg.message : 'Errore dal server.', true);
+      break;
+    default:
+      break;
+  }
+}
+
+function sanitizeName(name) {
+  const clean = String(name || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 16);
+  return clean || 'Avversario';
+}
+
+// Fotografia dello stato per l'ospite: niente mazzo (solo il conteggio) e la carta sbirciata
+// solo se è l'ospite ad averla sbirciata.
+function snapshotForGuest() {
+  const guestPeek = peekCardFor('p2');
+  return {
+    players: state.players,
+    currentPlayerIndex: state.currentPlayerIndex,
+    dealerIndex: state.dealerIndex,
+    roundNumber: state.roundNumber,
+    phase: state.phase,
+    targetScore: state.targetScore,
+    winnerId: state.winnerId,
+    forcedBusy: state.forcedBusy,
+    deckCount: state.drawPile.length,
+    peekCard: guestPeek || null
+  };
+}
+
+function handleRelay(d) {
+  if (online.role === 'host') {
+    if (!isHost()) return;
+    const guestIdx = state.players.findIndex(p => p.controller === 'remote');
+    if (d.k === 'action') {
+      if (state.phase !== 'TURN' || state.currentPlayerIndex !== guestIdx || state.forcedBusy) return;
+      if (d.a === 'HIT') drawCard(guestIdx);
+      else if (d.a === 'STAY') playerStay(guestIdx);
+    } else if (d.k === 'next') {
+      if (state.phase === 'ROUND_END') { closeDialog('round-end-modal'); proceedToNextRound(); }
+    } else if (d.k === 'rematch') {
+      if (state.phase === 'GAME_END' && state.config) { closeDialog('game-end-modal'); startNewGame(state.config); }
+    }
     return;
   }
-  caption.textContent = 'Rilevamento modello più recente...';
-  if (!state.discoveredFlashModels || state.discoveredFlashModels.length === 0) {
-    state.discoveredFlashModels = await discoverLatestFlashModels(apiKey);
-  }
-  caption.textContent = (state.discoveredFlashModels && state.discoveredFlashModels.length > 0)
-    ? formatModelLabel(state.discoveredFlashModels[0])
-    : 'Nessun modello Flash rilevato, verrà usato un fallback.';
-}
 
-function openSettingsModal() {
-  document.getElementById('gemini-key-input').value = localStorage.getItem('flip7_gemini_key') || '';
-  document.getElementById('sound-select').value = state.settings.soundEnabled ? 'on' : 'off';
-  document.getElementById('ai-test-result').textContent = '';
-  document.getElementById('settings-modal').showModal();
-}
-
-function saveGeminiKey(val) {
-  localStorage.setItem('flip7_gemini_key', val.trim());
-  state.discoveredFlashModels = [];
-  showToast('Chiave salvata.');
-}
-
-function saveSoundSetting(val) {
-  state.settings.soundEnabled = val === 'on';
-  localStorage.setItem('flip7_sound', val);
-
-  const onGameScreen = document.getElementById('screen-game').classList.contains('active');
-  if (!state.settings.soundEnabled) {
-    stopAmbientMusic();
-  } else if (onGameScreen) {
-    startAmbientMusic();
-  }
-}
-
-async function testAiConnection() {
-  const resultEl = document.getElementById('ai-test-result');
-  const apiKey = document.getElementById('gemini-key-input').value.trim() || localStorage.getItem('flip7_gemini_key') || '';
-  if (!apiKey) { resultEl.style.color = '#ef4444'; resultEl.textContent = 'Inserisci prima una chiave API.'; return; }
-  resultEl.style.color = 'var(--muted)';
-  resultEl.textContent = 'Test in corso...';
-  state.discoveredFlashModels = [];
-  const models = await discoverLatestFlashModels(apiKey);
-  if (models.length > 0) {
-    state.discoveredFlashModels = models;
-    resultEl.style.color = '#4ade80';
-    resultEl.textContent = 'Disponibili: ' + models.map(formatModelLabel).join(', ');
-  } else {
-    resultEl.style.color = '#ef4444';
-    resultEl.textContent = 'Nessun modello Flash disponibile. Verifica la chiave.';
+  if (online.role !== 'guest') return;
+  if (d.k === 'state' && d.s && Array.isArray(d.s.players) && d.s.players.length === 2) {
+    const s = d.s;
+    s.players.forEach(p => { p.name = sanitizeName(p.name); });
+    state.players = s.players;
+    state.currentPlayerIndex = s.currentPlayerIndex;
+    state.dealerIndex = s.dealerIndex;
+    state.roundNumber = s.roundNumber;
+    state.phase = s.phase;
+    state.targetScore = s.targetScore;
+    state.winnerId = s.winnerId;
+    state.forcedBusy = !!s.forcedBusy;
+    state.remote.deckCount = s.deckCount || 0;
+    state.remote.peekCard = s.peekCard || null;
+    if (state.phase === 'TURN') { closeDialog('round-end-modal'); closeDialog('game-end-modal'); }
+    renderGame();
+  } else if (d.k === 'msg') {
+    showGameMessageLocal(String(d.text || '').slice(0, 200));
+  } else if (d.k === 'sfx') {
+    playSfxLocal(String(d.name || ''));
+  } else if (d.k === 'roundEnd') {
+    if (state.players.length === 2) showRoundEndModal(d.gains || {});
+  } else if (d.k === 'gameEnd') {
+    const winner = state.players.find(p => p.id === d.winnerId);
+    if (!winner) return;
+    state.phase = 'GAME_END';
+    state.winnerId = winner.id;
+    closeDialog('round-end-modal');
+    renderGame();
+    saveGameStats(winner.id === state.localPlayerId ? 'win' : 'loss');
+    showGameEndModal(winner);
   }
 }
 
 /* =========================================================
-   9. STATS
+   9. STATISTICHE
    ========================================================= */
 const STATS_CATEGORIES = [
-  { key: 'easy', label: 'Facile (Prudente)' },
-  { key: 'normal', label: 'Normale (Bilanciato)' },
-  { key: 'hard', label: 'Difficile (Calcolatore)' },
-  { key: 'gemini', label: 'AI Suprema (Gemini)' }
+  { key: 'easy', label: 'CPU Facile (Prudente)' },
+  { key: 'normal', label: 'CPU Medio (Calcolatore)' },
+  { key: 'hard', label: 'CPU Difficile (Stratega)' },
+  { key: 'online', label: 'Online' }
 ];
 
 function defaultStats() {
@@ -1195,25 +1405,25 @@ function defaultStats() {
 }
 
 function loadStats() {
-  const raw = localStorage.getItem('flip7_stats');
+  const raw = localStorage.getItem(LS('stats'));
   if (!raw) return defaultStats();
   try {
     const parsed = JSON.parse(raw);
     const base = defaultStats();
-    return { total: parsed.total || 0, categories: Object.assign(base.categories, parsed.categories) };
+    return { total: parsed.total || 0, categories: Object.assign(base.categories, parsed.categories || {}) };
   } catch (e) {
     return defaultStats();
   }
 }
 
-function saveGameStats(winnerSide) {
+function saveGameStats(result) {
   const stats = loadStats();
   const cat = state.mode;
   if (!stats.categories[cat]) stats.categories[cat] = { wins: 0, losses: 0, total: 0 };
   stats.total++;
   stats.categories[cat].total++;
-  if (winnerSide === 'human') stats.categories[cat].wins++; else stats.categories[cat].losses++;
-  localStorage.setItem('flip7_stats', JSON.stringify(stats));
+  if (result === 'win') stats.categories[cat].wins++; else stats.categories[cat].losses++;
+  try { localStorage.setItem(LS('stats'), JSON.stringify(stats)); } catch (e) { /* ignora */ }
 }
 
 function openStatsModal() {
@@ -1223,112 +1433,124 @@ function openStatsModal() {
     const winRate = s.total > 0 ? Math.round((s.wins / s.total) * 100) : 0;
     return `<div class="stat-block">
       <div class="stat-title">${c.label}</div>
-      <div class="stat-row"><span>Partite: ${s.total}</span><span style="color:var(--primary);">Vinte: ${s.wins}</span><span style="color:#ef4444;">Perse: ${s.losses}</span><span>${winRate}%</span></div>
+      <div class="stat-row"><span>Partite: ${s.total}</span><span class="ok">Vinte: ${s.wins}</span><span class="ko">Perse: ${s.losses}</span><span>${winRate}%</span></div>
     </div>`;
   }).join('');
-
-  document.getElementById('stats-summary').innerHTML = `
-    <div class="stat-block"><strong>Partite Totali:</strong> ${stats.total}</div>
-    ${rows}
-  `;
-  document.getElementById('stats-modal').showModal();
+  document.getElementById('stats-summary').innerHTML = `<div class="stat-block"><strong>Partite totali:</strong> ${stats.total}</div>${rows}`;
+  openDialog('stats-modal');
 }
 
-function resetStats() {
-  document.getElementById('reset-stats-confirm-dialog').showModal();
-}
+function resetStats() { openDialog('reset-stats-confirm-dialog'); }
 
 function confirmResetStats() {
-  document.getElementById('reset-stats-confirm-dialog').close();
-  localStorage.removeItem('flip7_stats');
+  closeDialog('reset-stats-confirm-dialog');
+  localStorage.removeItem(LS('stats'));
   openStatsModal();
   showToast('Statistiche azzerate.');
 }
 
 /* =========================================================
-   10. TOAST
+   10. OPZIONI, TOAST E MESSAGGI DI GIOCO
    ========================================================= */
+function openSettingsModal() {
+  document.getElementById('sound-select').value = settings.soundEnabled ? 'on' : 'off';
+  document.getElementById('server-url-input').value = settings.serverUrl || '';
+  document.getElementById('server-url-hint').textContent = resolveServerUrl()
+    ? `In uso: ${resolveServerUrl()}`
+    : 'Nessun server rilevato: inserisci l\'indirizzo (es. wss://tuo-server.onrender.com).';
+  openDialog('settings-modal');
+}
+
+function saveSoundSetting(val) {
+  settings.soundEnabled = val === 'on';
+  saveSettings();
+}
+
+function saveServerUrl(val) {
+  settings.serverUrl = (val || '').trim();
+  saveSettings();
+  document.getElementById('server-url-hint').textContent = resolveServerUrl() ? `In uso: ${resolveServerUrl()}` : 'Nessun server configurato.';
+  showToast('Server salvato.');
+}
+
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(showToast._timer);
-  showToast._timer = setTimeout(() => t.classList.remove('show'), 2400);
+  showToast._timer = setTimeout(() => t.classList.remove('show'), 2600);
 }
 
-// In-flow message strip for game events (bust, Flip 7, Freeze, Flip Three, modifiers...).
-// Unlike the floating toast, this always has its own reserved space between the status
-// bar and the table, so it can never cover the cards or the HIT/STAY buttons.
-function showGameMessage(msg) {
+// Striscia messaggi dentro la schermata di gioco (Doppione, Filotto, poteri…): ha sempre il suo
+// spazio riservato tra la barra di stato e il tavolo, quindi non copre mai carte o pulsanti.
+function showGameMessageLocal(msg) {
   const bar = document.getElementById('game-message-bar');
   if (!bar) return;
   bar.textContent = msg;
   bar.classList.add('show');
-  clearTimeout(showGameMessage._timer);
-  showGameMessage._timer = setTimeout(() => {
+  clearTimeout(showGameMessageLocal._timer);
+  showGameMessageLocal._timer = setTimeout(() => {
     bar.classList.remove('show');
-    setTimeout(() => { if (!bar.classList.contains('show')) bar.textContent = '\u00A0'; }, 260);
-  }, 2600);
+    setTimeout(() => { if (!bar.classList.contains('show')) bar.textContent = ' '; }, 260);
+  }, 3200);
+}
+
+function showGameMessage(msg) {
+  showGameMessageLocal(msg);
+  if (isHost()) relay({ k: 'msg', text: msg });
 }
 
 /* =========================================================
-   11. PWA INSTALL (iOS & Android)
+   11. PWA (installazione iOS/Android, service worker, pull-to-refresh)
    ========================================================= */
-const isIOSDevice = () => {
-  return (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && !window.MSStream;
-};
+const isIOSDevice = () =>
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) && !window.MSStream;
 
-const isRunningStandalone = () => {
-  return ('standalone' in window.navigator && window.navigator.standalone === true) ||
-         window.matchMedia('(display-mode: standalone)').matches ||
-         window.matchMedia('(display-mode: fullscreen)').matches;
-};
+const isRunningStandalone = () =>
+  ('standalone' in window.navigator && window.navigator.standalone === true) ||
+  window.matchMedia('(display-mode: standalone)').matches ||
+  window.matchMedia('(display-mode: fullscreen)').matches;
 
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredAndroidPrompt = e;
-  if (!isRunningStandalone()) {
-    document.getElementById('android-install-banner').style.display = 'flex';
-  }
+  if (!isRunningStandalone()) document.getElementById('android-install-banner').style.display = 'flex';
 });
 
 function triggerAndroidInstall() {
-  if (deferredAndroidPrompt) {
-    deferredAndroidPrompt.prompt();
-    deferredAndroidPrompt.userChoice.then((choice) => {
-      if (choice.outcome === 'accepted') {
-        document.getElementById('android-install-banner').style.display = 'none';
-      }
-      deferredAndroidPrompt = null;
-    });
-  }
+  if (!deferredAndroidPrompt) return;
+  deferredAndroidPrompt.prompt();
+  deferredAndroidPrompt.userChoice.then((choice) => {
+    if (choice.outcome === 'accepted') document.getElementById('android-install-banner').style.display = 'none';
+    deferredAndroidPrompt = null;
+  });
 }
 
 function dismissIosBanner() {
   document.getElementById('ios-install-banner').style.display = 'none';
-  sessionStorage.setItem('flip7_ios_dismissed', 'true');
+  sessionStorage.setItem(LS('ios_dismissed'), 'true');
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  loadSavedProfile();
-  const savedSound = localStorage.getItem('flip7_sound');
-  if (savedSound) state.settings.soundEnabled = savedSound === 'on';
-
-  const iosBannerDismissed = sessionStorage.getItem('flip7_ios_dismissed');
+  loadSettings();
+  renderSetupChoices();
+  const iosBannerDismissed = sessionStorage.getItem(LS('ios_dismissed'));
   if (isIOSDevice() && !isRunningStandalone() && !iosBannerDismissed) {
     document.getElementById('ios-install-banner').style.display = 'flex';
   }
+  const codeInput = document.getElementById('room-code-input');
+  codeInput.addEventListener('input', () => { codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4); });
+  codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onlineJoinRoom(); });
 });
 
-if ('serviceWorker' in navigator) {
+window.addEventListener('beforeunload', () => { if (online.role) leaveOnline(true); });
+
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(err => console.error(err));
+    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('Service worker non registrato:', err));
   });
 }
 
-/* =========================================================
-   12. PULL-TO-REFRESH (force a fresh reload + cache update)
-   ========================================================= */
 async function performCacheRefresh() {
   try {
     if ('caches' in window) {
@@ -1340,7 +1562,7 @@ async function performCacheRefresh() {
       await Promise.all(regs.map(r => r.unregister()));
     }
   } catch (e) {
-    console.warn('Cache refresh cleanup failed:', e);
+    console.warn('Pulizia cache fallita:', e);
   }
   location.reload();
 }
@@ -1353,9 +1575,8 @@ async function performCacheRefresh() {
   let startY = 0, armed = false, pulling = false, refreshing = false;
 
   document.addEventListener('touchstart', (e) => {
-    if (refreshing) return;
-    if (document.querySelector('dialog[open]')) return;
-    if (e.touches.length !== 1) return;
+    if (refreshing || document.querySelector('dialog[open]') || e.touches.length !== 1) return;
+    if (!document.getElementById('screen-home').classList.contains('active')) return; // solo dalla home
     startY = e.touches[0].clientY;
     armed = true;
     pulling = false;
@@ -1378,7 +1599,6 @@ async function performCacheRefresh() {
     if (!armed) return;
     armed = false;
     indicator.classList.remove('pulling');
-
     if (pulling && indicator.classList.contains('ready')) {
       refreshing = true;
       indicator.classList.add('refreshing');

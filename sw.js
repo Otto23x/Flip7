@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flip7-v1.4';
+const CACHE_NAME = 'filotto-v2.0';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -19,8 +19,21 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
+// Rete prima, cache come riserva: così gli aggiornamenti arrivano subito quando si è online
+// e l'app resta comunque giocabile offline.
 self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET') return;
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then((res) => res || fetch(e.request))
+    fetch(e.request)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put(e.request, copy)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request).then((res) => res || caches.match('./index.html')))
   );
 });
